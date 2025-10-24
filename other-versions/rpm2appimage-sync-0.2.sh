@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Check if cache folder exists
+if [ ! -d cache ]; then
+  echo "Error: Cache folder not found"
+  exit 1
+fi
+
+# Create tmp folder if it does not exist
+mkdir -p AppDir
+
+# Loop through all RPM files in cache folder
+for rpm_file in cache/*.rpm; do
+  # Extract RPM file to tmp folder
+  rpm2cpio "$rpm_file" | (cd AppDir && cpio -idm)
+
+  # Find extracted package and copy to AppDir folder
+  pkg_file=$(find AppDir/ -name '*.x86_64.rpm')
+  if [ -z "$pkg_file" ]; then
+    echo "Error: Package file not found in $rpm_file"
+  else
+    rsync -avh "$pkg_file" AppDir/usr
+  fi
+
+  # Remove extracted package file
+  rm -f "$pkg_file"
+done
+
+# Remove tmp folder
+#rm -rf tmp

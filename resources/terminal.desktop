@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=Neofetch
+Comment=System information display
+Exec=neofetch
+Terminal=true
+Type=Application
+Icon=terminal
+Categories=System;
+StartupWMClass=neofetch
+StartupNotify=true

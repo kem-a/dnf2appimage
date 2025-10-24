@@ -1,0 +1,120 @@
+#!/bin/bash
+
+# Developed by Aliens @2023
+# version 2
+
+# Check if the file path argument is provided
+if [ -z "$1" ]; then
+  echo "Error: File path argument is missing."
+  exit 1
+fi
+
+# Initialize variables
+PKG="$1"
+APPDIR="$PKG.AppDir"
+
+# Preparing
+# Make AppDir folder
+if [ -d "$APPDIR" ]; then
+  rm -rf "$APPDIR"
+fi
+mkdir "$APPDIR"
+
+# Make tmp folder
+if [ -d "tmp" ]; then
+  rm -rf "tmp"
+fi
+mkdir "tmp"
+
+# Download all packages including dependencies
+toolbox run dnf download --arch=x86_64,noarch --resolve --quiet --destdir="$PWD/tmp" "$PKG"
+
+# Loop through all RPM files in tmp folder
+for rpm_file in tmp/*.rpm; do
+  # Load only missing dependencies against host
+  if ! rpm -q "$(basename "$rpm_file" .rpm)" &> /dev/null; then
+    # Extract RPM file to AppDir folder
+    echo "Extracting $rpm_file to AppDir"
+    rpm2cpio "$rpm_file" | (cd "$APPDIR" && cpio -idm)
+  else
+    rm "$rpm_file"
+  fi
+done
+
+# Remove temporary folder
+rm -rf tmp
+
+#
+# Finalizing AppDir folder by adding required files
+#
+
+# Adding .desktop file
+if [ -d "$APPDIR/usr/share/applications/" ]; then
+    desktop_file=$(find "$APPDIR/usr/share/applications/" -name "*.desktop" -print -quit)
+    if [ -n "$desktop_file" ]; then
+        symlink_file=$(basename "$desktop_file")
+        desktop_file=${desktop_file#"$APPDIR"/}
+        ln -s "$desktop_file" "$APPDIR/$symlink_file"
+        echo "Created symlink for $symlink_file in AppDir"
+    else
+        echo "No .desktop file found in AppDir/usr/share/applications/"
+    fi
+else
+    echo "AppDir/usr/share/applications/ directory does not exist"
+fi
+
+# Adding generic desktop file if original does not exist
+if [ ! "$(find "$APPDIR" -maxdepth 1 -name '*.desktop' -print -quit)" ]; then
+  # Copy the file to the AppDir
+  cp -n "resources/terminal.desktop" "${APPDIR}/"
+  echo "Warning: copied generic desktop file 'terminal.desktop' to AppDir.Please edit correct values."
+fi
+
+# Adding icon file in AppDir
+# Check if hicolor directory exists
+if [ ! -d "$APPDIR/usr/share/icons/hicolor" ]; then
+      cp -n "resources/terminal.svg" "${APPDIR}/"
+      ln -s "terminal.svg" "$APPDIR/.DirIcon"
+      echo "Warning: copied generic icon file 'terminal.svg' to AppDir."
+    else
+      if [ -d "$APPDIR/usr/share/icons/hicolor/scalable/apps" ]; then
+        image_files=$(find "$APPDIR/usr/share/icons/hicolor/scalable/apps" -type f \( -name "*.png" -o -name "*.svg" \))
+        # Create symlink to first image file found
+        image_file=$(echo "${image_files}" | tail -n1)
+        symlink_file=$(basename "$image_file")
+        image_file=${image_file#"$APPDIR"/}
+        ln -s "${image_file}" "${APPDIR/$symlink_file}"
+        ln -s "${symlink_file}" "$APPDIR/.DirIcon"
+        echo "Symlink created to ${image_file}."
+      else
+        if [ -d "$APPDIR/usr/share/icons/hicolor/256x256/apps" ]; then
+          image_files=$(find "$APPDIR/usr/share/icons/hicolor/256x256/apps" -type f \( -name "*.png" -o -name "*.svg" \))
+          # Create symlink to first image file found
+          image_file=$(echo "${image_files}" | tail -n1)
+          symlink_file=$(basename "$image_file")
+          image_file=${image_file#"$APPDIR"/}
+          ln -s "${image_file}" "${APPDIR/$symlink_file}"
+          ln -s "${symlink_file}" "$APPDIR/.DirIcon"
+          echo "Symlink created to ${image_file}."
+        else
+          if [ -d "$APPDIR/usr/share/icons/hicolor/128x128/apps" ]; then
+            image_files=$(find "$APPDIR/usr/share/icons/hicolor/128x128/apps" -type f \( -name "*.png" -o -name "*.svg" \))
+            # Create symlink to first image file found
+            image_file=$(echo "${image_files}" | tail -n1)
+            symlink_file=$(basename "$image_file")
+            image_file=${image_file#"$APPDIR"/}
+            ln -s "${image_file}" "${APPDIR/$symlink_file}"
+            ln -s "${symlink_file}" "$APPDIR/.DirIcon"
+            echo "Symlink created to ${image_file}."
+          fi
+        fi
+      fi
+fi
+
+cp -n resources/AppRun "$APPDIR"
+
+# Generating AppImage
+echo "Generating AppImage..."
+#"$PWD/appimagetool" "$APPDIR"
+appimagetool -n "$APPDIR"
+echo "Done."

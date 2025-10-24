@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# Check if the file path argument is provided
+if [ -z "$1" ]; then
+  echo "Error: File path argument is missing."
+  exit 1
+fi
+
+# Initialize variables
+PKG="$1"
+APPDIR="$PKG.AppDir"
+
+#toolbox run dnf download --arch=x86_64,noarch --resolve "$PKG"
+
+# Loop through all RPM files in tmp folder
+for rpm_file in tmp/*.rpm; do
+  # Load only missing dependencies against host
+  #if ! rpm -q "$(basename "$rpm_file" .rpm)" &> /dev/null; then
+    # Extract RPM file to AppDir folder
+    echo "Extracting $rpm_file to AppDir"
+    rpm2cpio "$rpm_file" | (cd "$APPDIR" && cpio -idm)
+  #else
+  #  rm "$rpm_file"
+  #fi
+done
+
+rm -r tmp/*.rpm
