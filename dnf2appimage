@@ -1,17 +1,70 @@
 #!/bin/bash
 
-# Developed by Aliens @2023
-# version 2
+# dnf2appimage - Convert RPM packages to AppImages
+# Copyright (c) 2025 Arnis K
+# Licensed under the MIT License.
+# See LICENSE file in the project root for full license information.
 
-# Check if the file path argument is provided
-if [ -z "$1" ]; then
-  echo "Error: File path argument is missing."
+VERSION="1.0.0"
+
+# Initialize variables
+DEBUG=false
+PKG=""
+
+# Function to show help
+show_help() {
+  echo "Usage: $(basename "$0") [OPTIONS] <package_name_or_rpm>"
+  echo ""
+  echo "Options:"
+  echo "  --help     Show this help message"
+  echo "  --version  Show version information"
+  echo "  --debug    Keep build directory (.AppDir) after successful build"
+  echo ""
+  exit 0
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --help)
+      show_help
+      ;;
+    --version)
+      echo "version $VERSION"
+      exit 0
+      ;;
+    --debug)
+      DEBUG=true
+      shift
+      ;;
+    -*)
+      echo "Error: Unknown option $1"
+      exit 1
+      ;;
+    *)
+      PKG="$1"
+      shift
+      ;;
+  esac
+done
+
+# Check if the package argument is provided
+if [ -z "$PKG" ]; then
+  echo "Error: Package name or RPM file argument is missing."
+  echo "Use --help for usage information."
   exit 1
 fi
 
-# Initialize variables
-PKG="$1"
 APPDIR="$PKG.AppDir"
+
+# Detect if running inside toolbox or another container
+if [ -f /run/.toolboxenv ] || [ -f /run/.containerenv ]; then
+  TOOLBOX_RUN=""
+elif command -v toolbox >/dev/null 2>&1; then
+  TOOLBOX_RUN="toolbox run"
+else
+  TOOLBOX_RUN=""
+fi
 
 # Preparing
 # Make AppDir folder
@@ -27,18 +80,22 @@ fi
 mkdir "tmp"
 
 # Download all packages including dependencies
-toolbox run dnf download --arch=x86_64,noarch --resolve --quiet --destdir="$PWD/tmp" "$PKG"
+if [ -f "$PKG" ]; then
+  echo "Local RPM detected: $PKG"
+  cp "$PKG" tmp/
+  # Get package name from RPM file
+  PKG_NAME=$($TOOLBOX_RUN rpm -qp --qf "%{NAME}" "$PKG")
+  $TOOLBOX_RUN dnf download --resolve --quiet --destdir="$PWD/tmp" "$PKG_NAME"
+else
+  PKG_NAME="$PKG"
+  $TOOLBOX_RUN dnf download --resolve --quiet --destdir="$PWD/tmp" "$PKG"
+fi
 
 # Loop through all RPM files in tmp folder
 for rpm_file in tmp/*.rpm; do
-  # Load only missing dependencies against host
-  if ! rpm -q "$(basename "$rpm_file" .rpm)" &> /dev/null; then
-    # Extract RPM file to AppDir folder
-    echo "Extracting $rpm_file to AppDir"
-    rpm2cpio "$rpm_file" | (cd "$APPDIR" && cpio -idm)
-  else
-    rm "$rpm_file"
-  fi
+  # Extract RPM file to AppDir folder
+  echo "Extracting $rpm_file to AppDir"
+  $TOOLBOX_RUN rpm2cpio "$rpm_file" | (cd "$APPDIR" && $TOOLBOX_RUN cpio -idm)
 done
 
 # Remove temporary folder
@@ -71,50 +128,127 @@ if [ ! "$(find "$APPDIR" -maxdepth 1 -name '*.desktop' -print -quit)" ]; then
 fi
 
 # Adding icon file in AppDir
-# Check if hicolor directory exists
-if [ ! -d "$APPDIR/usr/share/icons/hicolor" ]; then
-      cp -n "resources/terminal.svg" "${APPDIR}/"
-      ln -s "terminal.svg" "$APPDIR/.DirIcon"
-      echo "Warning: copied generic icon file 'terminal.svg' to AppDir."
-    else
-      if [ -d "$APPDIR/usr/share/icons/hicolor/scalable/apps" ]; then
-        image_files=$(find "$APPDIR/usr/share/icons/hicolor/scalable/apps" -type f \( -name "*.png" -o -name "*.svg" \))
-        # Create symlink to first image file found
-        image_file=$(echo "${image_files}" | tail -n1)
-        symlink_file=$(basename "$image_file")
-        image_file=${image_file#"$APPDIR"/}
-        ln -s "${image_file}" "${APPDIR/$symlink_file}"
-        ln -s "${symlink_file}" "$APPDIR/.DirIcon"
-        echo "Symlink created to ${image_file}."
-      else
-        if [ -d "$APPDIR/usr/share/icons/hicolor/256x256/apps" ]; then
-          image_files=$(find "$APPDIR/usr/share/icons/hicolor/256x256/apps" -type f \( -name "*.png" -o -name "*.svg" \))
-          # Create symlink to first image file found
-          image_file=$(echo "${image_files}" | tail -n1)
-          symlink_file=$(basename "$image_file")
-          image_file=${image_file#"$APPDIR"/}
-          ln -s "${image_file}" "${APPDIR/$symlink_file}"
-          ln -s "${symlink_file}" "$APPDIR/.DirIcon"
-          echo "Symlink created to ${image_file}."
+# Try to find icon name from desktop file
+desktop_file_path=$(find "$APPDIR" -maxdepth 1 -name "*.desktop" -print -quit)
+if [ -n "$desktop_file_path" ]; then
+    icon_name=$(grep "^Icon=" "$desktop_file_path" | head -n 1 | cut -d "=" -f 2)
+    if [ -n "$icon_name" ]; then
+        # If it's a path, get the basename
+        icon_base=$(basename "$icon_name")
+        # Remove extension if it has one
+        icon_no_ext="${icon_base%.*}"
+        
+        # Search for the icon in common locations
+        found_icon=$(find "$APPDIR/usr/share/icons" "$APPDIR/usr/share/pixmaps" -type f \( -name "$icon_base" -o -name "$icon_no_ext.png" -o -name "$icon_no_ext.svg" -o -name "$icon_no_ext.xpm" \) 2>/dev/null | head -n 1)
+        
+        if [ -n "$found_icon" ]; then
+            symlink_name=$(basename "$found_icon")
+            rel_icon_path=${found_icon#"$APPDIR"/}
+            ln -s "$rel_icon_path" "$APPDIR/$symlink_name"
+            ln -s "$symlink_name" "$APPDIR/.DirIcon"
+            echo "Icon found and symlinked: $rel_icon_path"
+            
+            # Fix desktop file if it uses absolute path for Icon or has extension
+            real_desktop_file=$(readlink -f "$desktop_file_path")
+            sed -i "s|^Icon[[:space:]]*=.*|Icon=$icon_no_ext|" "$real_desktop_file"
+            echo "Fixed Icon path in desktop file to $icon_no_ext"
+            
+            # Fix Exec path in desktop file
+            sed -i 's|^Exec=[[:space:]]*/usr/bin/|Exec=|' "$real_desktop_file"
+            sed -i 's|^Exec=[[:space:]]*/usr/sbin/|Exec=|' "$real_desktop_file"
+            sed -i 's|^Exec=[[:space:]]*/bin/|Exec=|' "$real_desktop_file"
+            sed -i 's|^Exec=[[:space:]]*/sbin/|Exec=|' "$real_desktop_file"
+            echo "Fixed Exec path in desktop file"
+        fi
+    fi
+fi
+
+# Adding metadata from metainfo.xml if it exists
+metainfo_file=$(find "$APPDIR/usr/share/metainfo" -name "*.xml" -print -quit)
+if [ -n "$metainfo_file" ] && [ -n "$desktop_file_path" ]; then
+    echo "Metainfo file found: $metainfo_file"
+    real_desktop_file=$(readlink -f "$desktop_file_path")
+    
+    # 1. Extract version
+    version=$(grep -m 1 'release version=' "$metainfo_file" | sed -n 's/.*version="\([^"]*\)".*/\1/p')
+    if [ -n "$version" ]; then
+        sed -i '/^X-AppImage-Version=/d' "$real_desktop_file"
+        echo "X-AppImage-Version=$version" >> "$real_desktop_file"
+        echo "Added X-AppImage-Version=$version to desktop file"
+    fi
+    
+    # 2. Extract description (first <p> tag content)
+    description=$(grep -m 1 '<p>' "$metainfo_file" | sed -n 's/.*<p>\([^<]*\)<\/p>.*/\1/p')
+    if [ -n "$description" ]; then
+        sed -i '/^Comment=/d' "$real_desktop_file"
+        if grep -q "^\[Desktop Entry\]" "$real_desktop_file"; then
+            sed -i "/^\[Desktop Entry\]/a Comment=$description" "$real_desktop_file"
         else
-          if [ -d "$APPDIR/usr/share/icons/hicolor/128x128/apps" ]; then
-            image_files=$(find "$APPDIR/usr/share/icons/hicolor/128x128/apps" -type f \( -name "*.png" -o -name "*.svg" \))
-            # Create symlink to first image file found
-            image_file=$(echo "${image_files}" | tail -n1)
+            echo "Comment=$description" >> "$real_desktop_file"
+        fi
+        echo "Added Comment to desktop file"
+    fi
+    
+    # 3. Extract homepage
+    homepage=$(grep -m 1 '<url type="homepage">' "$metainfo_file" | sed -n 's/.*<url type="homepage">\([^<]*\)<\/url>.*/\1/p')
+    if [ -n "$homepage" ]; then
+        sed -i '/^X-AppImage-Homepage=/d' "$real_desktop_file"
+        echo "X-AppImage-Homepage=$homepage" >> "$real_desktop_file"
+        echo "Added X-AppImage-Homepage=$homepage to desktop file"
+    fi
+fi
+
+# Fallback if no icon found yet
+if [ ! -L "$APPDIR/.DirIcon" ] && [ ! -f "$APPDIR/.DirIcon" ]; then
+    if [ -d "$APPDIR/usr/share/icons/hicolor/scalable/apps" ]; then
+        image_files=$(find "$APPDIR/usr/share/icons/hicolor/scalable/apps" -type f \( -name "*.png" -o -name "*.svg" \))
+        image_file=$(echo "${image_files}" | tail -n1)
+        if [ -n "$image_file" ]; then
             symlink_file=$(basename "$image_file")
             image_file=${image_file#"$APPDIR"/}
-            ln -s "${image_file}" "${APPDIR/$symlink_file}"
+            ln -s "${image_file}" "${APPDIR}/${symlink_file}"
             ln -s "${symlink_file}" "$APPDIR/.DirIcon"
-            echo "Symlink created to ${image_file}."
-          fi
+            echo "Symlink created to ${image_file} (fallback hicolor scalable)."
         fi
-      fi
+    fi
+fi
+
+# Final fallback to generic icon
+if [ ! -L "$APPDIR/.DirIcon" ] && [ ! -f "$APPDIR/.DirIcon" ]; then
+    cp -n "resources/terminal.svg" "${APPDIR}/"
+    ln -s "terminal.svg" "$APPDIR/.DirIcon"
+    echo "Warning: copied generic icon file 'terminal.svg' to AppDir."
 fi
 
 cp -n resources/AppRun "$APPDIR"
+chmod +x "$APPDIR/AppRun"
 
 # Generating AppImage
 echo "Generating AppImage..."
-#"$PWD/appimagetool" "$APPDIR"
-appimagetool -n "$APPDIR"
-echo "Done."
+# Determine output filename
+ARCH=$(uname -m)
+OUTPUT_APPIMAGE="${PKG_NAME}-${ARCH}.AppImage"
+
+# Remove existing AppImage with same name if it exists
+if [ -f "$OUTPUT_APPIMAGE" ]; then
+  rm "$OUTPUT_APPIMAGE"
+fi
+
+if $TOOLBOX_RUN appimagetool -n "$APPDIR" "$OUTPUT_APPIMAGE"; then
+  if [ -f "$OUTPUT_APPIMAGE" ]; then
+    chmod -x "$OUTPUT_APPIMAGE"
+    echo "Removed executable bit from $OUTPUT_APPIMAGE"
+  fi
+
+  echo "Done."
+  # Cleanup build directory unless debug is passed
+  if [ "$DEBUG" = false ]; then
+    echo "Cleaning up build directory $APPDIR..."
+    rm -rf "$APPDIR"
+  else
+    echo "Debug mode: keeping build directory $APPDIR"
+  fi
+else
+  echo "Error: AppImage generation failed."
+  exit 1
+fi

@@ -1,0 +1,6 @@
+*.rpm
+*.AppImage
+*.deb
+*.tar.gz
+*.zip
+*.appimage

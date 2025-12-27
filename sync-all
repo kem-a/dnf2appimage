@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# sync-all - Extract all RPMs from tmp to AppDir
+# Copyright (c) 2025 Arnis K
+# Licensed under the MIT License.
+
 # Check if the file path argument is provided
 if [ -z "$1" ]; then
   echo "Error: File path argument is missing."

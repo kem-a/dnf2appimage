@@ -1,45 +1,32 @@
 # Copilot Instructions for `dnf2appimage`
 
 ## Overview
-This repository provides tools and scripts to convert RPM packages into AppImages. The structure and scripts are tailored for specific workflows, so understanding the repository layout and conventions is essential for contributing effectively.
+`dnf2appimage` is a toolset for converting RPM packages into AppImages. It uses `dnf` (via `toolbox`) to resolve and download dependencies, extracts them into an AppDir structure, and packages them using `appimagetool`.
 
-## Repository Structure
-- **`liveusb-creator.AppDir/`**: Contains an example AppDir structure, including binaries, libraries, and configuration files.
-- **`other-versions/`**: Hosts multiple versions of the `rpm2AppImage` script. Use these scripts to convert RPM packages into AppImages.
-- **`resources/`**: Pre-configured resources for specific applications like `freerdp` and `Powershell`.
-- **`sync-all` and `sync-deps`**: Scripts for synchronizing dependencies.
+## Big Picture Architecture
+- **Main Entry Point**: [dnf2appimage](../dnf2appimage) is the primary script that orchestrates the entire process.
+- **Dependency Management**: Uses `toolbox run dnf download` to fetch RPMs and their dependencies into a `tmp/` directory.
+- **Extraction**: Uses `rpm2cpio` and `cpio` to extract RPM contents into a `.AppDir` folder.
+- **Bundling**: Resources from [resources/](../resources/) (like `AppRun`, `.desktop` files, and icons) are merged into the AppDir.
+- **Packaging**: Calls `appimagetool` to generate the final `.AppImage` file.
 
-## Key Workflows
-
-### Creating an AppImage
-1. Select the appropriate `rpm2AppImage` script from the `other-versions/` directory.
-2. Run the script with the path to the RPM package:
-   ```bash
-   ./other-versions/rpm2AppImage-0.1.sh path/to/package.rpm
-   ```
-3. The resulting AppImage will be created in the current directory.
-
-### Example: Packaging `freerdp`
-```bash
-./other-versions/rpm2AppImage-0.1.sh resources/freerdp/freerdp-2.9.0-1.fc37.x86_64.rpm
-```
+## Critical Workflows
+- **Creating an AppImage**: Run `./dnf2appimage <package_name>`. This will create `<package_name>.AppDir` and then the final AppImage.
+- **Manual Dependency Sync**: Use [sync-deps](../sync-deps) or [sync-all](../sync-all) if you already have RPMs in `tmp/` and want to update an existing AppDir.
+- **Environment Setup**: The [AppRun-bash](../resources/AppRun-bash) script defines the runtime environment (PATH, LD_LIBRARY_PATH, etc.) for the AppImage.
 
 ## Project-Specific Conventions
-- **Script Versions**: Multiple versions of `rpm2AppImage` are maintained for compatibility with different RPM packages. Always verify which version works best for your use case.
-- **AppDir Structure**: Follow the example in `liveusb-creator.AppDir/` for organizing files when creating new AppImages.
-- **Resource Management**: Place application-specific resources in the `resources/` directory.
+- **Toolbox Usage**: Always use `toolbox` for `dnf` commands to ensure a consistent environment and avoid host system conflicts.
+- **AppDir Structure**: Follow the standard AppDir layout: `usr/bin`, `usr/lib64`, `usr/share`, etc.
+- **Resource Management**: Place generic or fallback resources (like `terminal.desktop` or `terminal.svg`) in [resources/](../resources/).
+- **Extraction Pattern**: `rpm2cpio "$rpm_file" | (cd "$APPDIR" && cpio -idm)` is the standard way to extract packages.
 
 ## External Dependencies
-- **`dnf`**: Used for managing RPM packages.
-- **`bash`**: Required for running the scripts.
+- `toolbox`: Required for running `dnf` in a containerized environment.
+- `dnf`: Used for package resolution and downloading.
+- `rpm2cpio` & `cpio`: Used for extracting RPM packages.
+- `appimagetool`: Required to bundle the AppDir into an AppImage.
 
 ## Tips for Development
-- Test scripts in the `tmp/` directory to avoid cluttering the main workspace.
-- Use the `sync-all` and `sync-deps` scripts to ensure all dependencies are up-to-date before creating AppImages.
-
-## Contribution Guidelines
-- Follow the repository structure and conventions.
-- Document any new scripts or workflows in the `README.md`.
-- Ensure compatibility with the existing `rpm2AppImage` scripts.
-
-For more details, refer to the [README.md](../README.md).
+- When modifying [dnf2appimage](../dnf2appimage), ensure that icon and desktop file discovery logic remains robust.
+- Test new AppImages on different distributions to verify that [AppRun-bash](../resources/AppRun-bash) environment variables are sufficient.
