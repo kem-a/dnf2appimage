@@ -4,10 +4,43 @@
 # Copyright (c) 2025 Arnis K
 # Licensed under the MIT License.
 
-# Check if the file path argument is provided
-if [ -z "$1" ]; then
-  echo "Error: File path argument is missing."
+# Safe bash settings and options
+set -euo pipefail
+shopt -s nullglob
+
+# Usage and option parsing
+usage() {
+  cat <<EOF
+Usage: $0 [--dry-run] [--keep-tmp] [--verbose] <package>
+
+Options:
+  --dry-run   Show actions without extracting files
+  --keep-tmp  Keep files in tmp/ after operation
+  --verbose   Show additional info
+  --help      Show this help
+EOF
   exit 1
+}
+
+DRY_RUN=false
+KEEP_TMP=false
+VERBOSE=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=true; shift ;;
+    --keep-tmp) KEEP_TMP=true; shift ;;
+    --verbose) VERBOSE=true; shift ;;
+    --help) usage ;;
+    --*) echo "Unknown option: $1"; usage ;;
+    *) break ;;
+  esac
+done
+
+# Check positional argument
+if [ $# -lt 1 ]; then
+  echo "Error: package argument is missing."
+  usage
 fi
 
 # Initialize variables
@@ -15,22 +48,54 @@ PKG="$1"
 APPDIR="$PKG.AppDir"
 
 # Make AppDir folder
-if [ ! -d "$APPDIR" ]; then
-  mkdir -p "$APPDIR"
+mkdir -p "$APPDIR"
+
+verbose() { $VERBOSE && echo "$@"; }
+
+# Find rpm files
+files=(tmp/*.rpm)
+if [ ${#files[@]} -eq 0 ]; then
+  verbose "No RPMs found in tmp/; nothing to do."
+  exit 0
 fi
 
-#toolbox run dnf download --arch=x86_64,noarch --resolve "$PKG"
-
 # Loop through all RPM files in tmp folder
-for rpm_file in tmp/*.rpm; do
-  # Load only missing dependencies against host
-  if ! rpm -q "$(basename "$rpm_file" .rpm)" &> /dev/null; then
-    # Extract RPM file to AppDir folder
-    echo "Extracting $rpm_file to AppDir"
-    rpm2cpio "$rpm_file" | (cd "$APPDIR" && cpio -idm)
+for rpm_file in "${files[@]}"; do
+  [ -f "$rpm_file" ] || continue
+
+  # Try to query package name from RPM metadata
+  name=$(rpm -qp --qf '%{NAME}\n' "$rpm_file" 2>/dev/null || true)
+  if [ -z "$name" ]; then
+    # Fallback heuristic: strip version/release/arch from filename (best-effort)
+    name=$(basename "$rpm_file" .rpm)
+    name=${name%%-*}
+    verbose "Warning: could not read NAME from $rpm_file; falling back to '$name'"
+  fi
+
+  # If package is already provided by host, remove it
+  if rpm -q "$name" >/dev/null 2>&1; then
+    verbose "Package $name appears installed on host; removing $rpm_file"
+    rm -f -- "$rpm_file"
+    continue
+  fi
+
+  echo "Extracting $rpm_file to AppDir"
+  if $DRY_RUN; then
+    echo "DRY-RUN: would extract $rpm_file to $APPDIR"
+    continue
+  fi
+
+  if rpm2cpio "$rpm_file" | (cd "$APPDIR" && cpio -idm); then
+    verbose "Successfully extracted $rpm_file"
+    rm -f -- "$rpm_file"
   else
-    rm "$rpm_file"
+    echo "Error: failed to extract $rpm_file" >&2
+    exit 1
   fi
 done
 
-rm -r tmp/*.rpm
+# Cleanup tmp unless requested to keep (don't delete in dry-run)
+if [ "$KEEP_TMP" = false ] && [ "$DRY_RUN" = false ]; then
+  rm -f -- tmp/*.rpm || true
+fi
+
