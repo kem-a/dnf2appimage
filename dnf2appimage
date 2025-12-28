@@ -85,10 +85,25 @@ if [ -f "$PKG" ]; then
   cp "$PKG" tmp/
   # Get package name from RPM file
   PKG_NAME=$($TOOLBOX_RUN rpm -qp --qf "%{NAME}" "$PKG")
-  $TOOLBOX_RUN dnf download --resolve --quiet --destdir="$PWD/tmp" "$PKG_NAME"
+  if ! $TOOLBOX_RUN dnf download --resolve --quiet --destdir="$PWD/tmp" "$PKG_NAME" 2>/dev/null; then
+    echo "Error: Failed to download dependencies for $PKG_NAME"
+    rm -rf tmp "$APPDIR"
+    exit 1
+  fi
 else
   PKG_NAME="$PKG"
-  $TOOLBOX_RUN dnf download --resolve --quiet --destdir="$PWD/tmp" "$PKG"
+  if ! $TOOLBOX_RUN dnf download --resolve --quiet --destdir="$PWD/tmp" "$PKG" 2>/dev/null; then
+    echo "Error: Package '$PKG' not found or failed to download"
+    rm -rf tmp "$APPDIR"
+    exit 1
+  fi
+fi
+
+# Check if any RPMs were downloaded
+if ! ls tmp/*.rpm >/dev/null 2>&1; then
+  echo "Error: No RPM packages were downloaded"
+  rm -rf tmp "$APPDIR"
+  exit 1
 fi
 
 # Loop through all RPM files in tmp folder

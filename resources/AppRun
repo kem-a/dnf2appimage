@@ -4,11 +4,15 @@ HERE="$(dirname "$(readlink -f "${0}")")"
 # PATH
 export PATH="${HERE}:${HERE}/usr/bin/:${HERE}/usr/sbin/:${HERE}/usr/games/:${HERE}/bin/:${HERE}/sbin/${PATH:+:$PATH}"
 
-# LD_LIBRARY_PATH - dynamically add subdirectories of usr/lib
+# LD_LIBRARY_PATH - dynamically add subdirectories of usr/lib and usr/lib64
 if [ -d "${HERE}/usr/lib" ]; then
-  lib_dirs=$(find "$HERE"/usr/lib -type d 2>/dev/null | sed 's#usr/lib/#DEL\n#g' | grep -v 'DEL$')
-  for d in $lib_dirs; do
-    export LD_LIBRARY_PATH="${HERE}/usr/lib/${d}/:${LD_LIBRARY_PATH}"
+  for d in $(find "${HERE}/usr/lib" -type d 2>/dev/null); do
+    export LD_LIBRARY_PATH="${d}:${LD_LIBRARY_PATH}"
+  done
+fi
+if [ -d "${HERE}/usr/lib64" ]; then
+  for d in $(find "${HERE}/usr/lib64" -type d 2>/dev/null); do
+    export LD_LIBRARY_PATH="${d}:${LD_LIBRARY_PATH}"
   done
 fi
 export LD_LIBRARY_PATH="${HERE}/usr/lib/:${HERE}/usr/lib/x86_64-linux-gnu/:${HERE}/usr/lib64/:${HERE}/lib/:${HERE}/lib64/:${HERE}/lib/x86_64-linux-gnu/${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
