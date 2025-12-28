@@ -1,11 +1,12 @@
 [Desktop Entry]
 Version=1.0
-Name=Neofetch
-Comment=System information display
-Exec=neofetch
+Name=Terminal
+Comment=Terminal placeholder application
+Exec=terminal
 Terminal=true
 Type=Application
 Icon=terminal
 Categories=System;
-StartupWMClass=neofetch
+StartupWMClass=terminal
 StartupNotify=true
+X-AppImage-Version=1.0.0
