@@ -80,9 +80,10 @@ fi
 mkdir "tmp"
 
 # Download all packages including dependencies
+LOCAL_RPM=""
 if [ -f "$PKG" ]; then
   echo "Local RPM detected: $PKG"
-  cp "$PKG" tmp/
+  LOCAL_RPM="$PKG"
   # Get package name from RPM file
   PKG_NAME=$($TOOLBOX_RUN rpm -qp --qf "%{NAME}" "$PKG")
   if ! $TOOLBOX_RUN dnf download --resolve --quiet --destdir="$PWD/tmp" "$PKG_NAME" 2>/dev/null; then
@@ -90,6 +91,16 @@ if [ -f "$PKG" ]; then
     rm -rf tmp "$APPDIR"
     exit 1
   fi
+  # Remove any downloaded versions of the main package (we'll use the local one)
+  for downloaded_rpm in tmp/*.rpm; do
+    downloaded_name=$($TOOLBOX_RUN rpm -qp --qf "%{NAME}" "$downloaded_rpm" 2>/dev/null)
+    if [ "$downloaded_name" = "$PKG_NAME" ]; then
+      echo "Removing downloaded $downloaded_rpm (using local RPM instead)"
+      rm -f "$downloaded_rpm"
+    fi
+  done
+  # Copy local RPM to tmp (will be extracted last)
+  cp "$PKG" tmp/
 else
   PKG_NAME="$PKG"
   if ! $TOOLBOX_RUN dnf download --resolve --quiet --destdir="$PWD/tmp" "$PKG" 2>/dev/null; then
@@ -107,11 +118,23 @@ if ! ls tmp/*.rpm >/dev/null 2>&1; then
 fi
 
 # Loop through all RPM files in tmp folder
+# Extract the main package last so its files take precedence over dependencies
+MAIN_RPM=""
 for rpm_file in tmp/*.rpm; do
-  # Extract RPM file to AppDir folder
+  rpm_name=$($TOOLBOX_RUN rpm -qp --qf "%{NAME}" "$rpm_file" 2>/dev/null)
+  if [ "$rpm_name" = "$PKG_NAME" ]; then
+    MAIN_RPM="$rpm_file"
+    continue
+  fi
   echo "Extracting $rpm_file to AppDir"
   $TOOLBOX_RUN rpm2cpio "$rpm_file" | (cd "$APPDIR" && $TOOLBOX_RUN cpio -idm)
 done
+
+# Extract main package last
+if [ -n "$MAIN_RPM" ]; then
+  echo "Extracting $MAIN_RPM to AppDir (main package)"
+  $TOOLBOX_RUN rpm2cpio "$MAIN_RPM" | (cd "$APPDIR" && $TOOLBOX_RUN cpio -idm)
+fi
 
 # Remove temporary folder
 rm -rf tmp
