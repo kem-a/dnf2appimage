@@ -38,6 +38,9 @@ export GI_TYPELIB_PATH="${HERE}/usr/lib/girepository-1.0/:${HERE}/usr/lib64/gire
 # GSettings
 export GSETTINGS_SCHEMA_DIR="${HERE}/usr/share/glib-2.0/schemas/${GSETTINGS_SCHEMA_DIR:+:$GSETTINGS_SCHEMA_DIR}"
 
+# Evolution Data Server / Camel
+export CAMEL_PROVIDER_PATH="${HERE}/usr/lib64/evolution-data-server/camel-providers/:${HERE}/usr/lib/evolution-data-server/camel-providers/"
+
 # GStreamer
 export GST_PLUGIN_SCANNER="${HERE}/usr/libexec/gstreamer-1.0/gst-plugin-scanner"
 
