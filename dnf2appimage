@@ -121,8 +121,49 @@ rm -rf tmp
 #
 
 # Adding .desktop file
+# Strategy: 1) Match by package name, 2) Filter out NoDisplay=true, 3) Fallback to first visible
 if [ -d "$APPDIR/usr/share/applications/" ]; then
-    desktop_file=$(find "$APPDIR/usr/share/applications/" -name "*.desktop" -print -quit)
+    desktop_file=""
+    
+    # Convert package name to search pattern (e.g., gnome-calendar -> *gnome*calendar* or *Calendar*)
+    # Handle common naming: gnome-calendar -> org.gnome.Calendar.desktop
+    pkg_pattern=$(echo "$PKG_NAME" | sed 's/-/.*/')
+    
+    # Strategy 1: Try to find desktop file matching package name (case-insensitive)
+    for df in "$APPDIR/usr/share/applications/"*.desktop; do
+        [ -f "$df" ] || continue
+        df_basename=$(basename "$df")
+        # Check if filename matches package pattern (case-insensitive)
+        if echo "$df_basename" | grep -iq "$pkg_pattern"; then
+            # Skip if NoDisplay=true
+            if ! grep -q "^NoDisplay=true" "$df"; then
+                desktop_file="$df"
+                echo "Found desktop file matching package name: $df_basename"
+                break
+            fi
+        fi
+    done
+    
+    # Strategy 2: If no match, find first desktop file without NoDisplay=true
+    if [ -z "$desktop_file" ]; then
+        for df in "$APPDIR/usr/share/applications/"*.desktop; do
+            [ -f "$df" ] || continue
+            if ! grep -q "^NoDisplay=true" "$df"; then
+                desktop_file="$df"
+                echo "Using first visible desktop file: $(basename "$df")"
+                break
+            fi
+        done
+    fi
+    
+    # Strategy 3: Last resort - use any desktop file
+    if [ -z "$desktop_file" ]; then
+        desktop_file=$(find "$APPDIR/usr/share/applications/" -name "*.desktop" -print -quit)
+        if [ -n "$desktop_file" ]; then
+            echo "Warning: All desktop files have NoDisplay=true, using: $(basename "$desktop_file")"
+        fi
+    fi
+    
     if [ -n "$desktop_file" ]; then
         symlink_file=$(basename "$desktop_file")
         desktop_file=${desktop_file#"$APPDIR"/}
@@ -233,6 +274,19 @@ if [ ! -L "$APPDIR/.DirIcon" ] && [ ! -f "$APPDIR/.DirIcon" ]; then
     cp -n "resources/terminal.svg" "${APPDIR}/"
     ln -s "terminal.svg" "$APPDIR/.DirIcon"
     echo "Warning: copied generic icon file 'terminal.svg' to AppDir."
+fi
+
+# Compile GSettings schemas if any exist
+if [ -d "$APPDIR/usr/share/glib-2.0/schemas" ]; then
+    schema_files=$(find "$APPDIR/usr/share/glib-2.0/schemas" -name "*.gschema.xml" 2>/dev/null)
+    if [ -n "$schema_files" ]; then
+        echo "Compiling GSettings schemas..."
+        if $TOOLBOX_RUN glib-compile-schemas "$APPDIR/usr/share/glib-2.0/schemas"; then
+            echo "GSettings schemas compiled successfully"
+        else
+            echo "Warning: Failed to compile GSettings schemas"
+        fi
+    fi
 fi
 
 cp -n resources/AppRun "$APPDIR"
