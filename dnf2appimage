@@ -253,25 +253,39 @@ extract_pkg_name() {
 # Resolve dependencies and get URLs without downloading
 echo "Resolving dependencies for $HOST_ARCH architecture..."
 LOCAL_RPM=""
+LOCAL_ONLY=false
 if [ -f "$PKG" ]; then
   echo "Local RPM detected: $PKG"
   LOCAL_RPM="$PKG"
   # Get package name from RPM file
-  PKG_NAME=$($TOOLBOX_RUN rpm -qp --qf "%{NAME}" "$PKG")
+  PKG_NAME=$($TOOLBOX_RUN rpm -qp --qf "%{NAME}" "$PKG" 2>/dev/null)
   ALL_URLS=$($TOOLBOX_RUN dnf5 download --resolve --url --arch="$HOST_ARCH" --arch=noarch "$PKG_NAME" 2>/dev/null)
+  
+  # If package not in repos, use local RPM only (common for proprietary apps like Slack)
+  if [ -z "$ALL_URLS" ]; then
+    echo "Package not found in repositories, using local RPM only..."
+    LOCAL_ONLY=true
+  fi
 else
   PKG_NAME="$PKG"
   ALL_URLS=$($TOOLBOX_RUN dnf5 download --resolve --url --arch="$HOST_ARCH" --arch=noarch "$PKG" 2>/dev/null)
 fi
 
-if [ -z "$ALL_URLS" ]; then
+if [ -z "$ALL_URLS" ] && [ "$LOCAL_ONLY" = false ]; then
   echo "Error: Package '$PKG' not found or failed to resolve dependencies"
   rm -rf tmp "$APPDIR"
   exit 1
 fi
 
-total_count=$(echo "$ALL_URLS" | wc -l)
-echo "Resolved $total_count packages"
+# Handle local-only mode (no repo dependencies to resolve)
+if [ "$LOCAL_ONLY" = true ]; then
+  echo "Using local RPM only (no repository dependencies)"
+  cp "$LOCAL_RPM" tmp/
+  echo "Added local RPM: $(basename "$LOCAL_RPM")"
+else
+  # Normal mode: process URLs and download dependencies
+  total_count=$(echo "$ALL_URLS" | wc -l)
+  echo "Resolved $total_count packages"
 
 # Filter URLs based on host packages and excludelist
 FILTERED_URLS=""
@@ -340,6 +354,8 @@ if [ -n "$LOCAL_RPM" ]; then
   cp "$LOCAL_RPM" tmp/
   echo "Added local RPM: $(basename "$LOCAL_RPM")"
 fi
+
+fi  # End of LOCAL_ONLY else block
 
 # Check if any RPMs were downloaded
 if ! ls tmp/*.rpm >/dev/null 2>&1; then
@@ -657,7 +673,6 @@ fi
 # Combine uruntime with DwarFS image to create AppImage
 echo "Creating AppImage with uruntime..."
 cat "$URUNTIME_PATH" "$DWARFS_IMAGE" > "$OUTPUT_APPIMAGE"
-chmod +x "$OUTPUT_APPIMAGE"
 
 # Cleanup temporary DwarFS image
 rm -f "$DWARFS_IMAGE"
