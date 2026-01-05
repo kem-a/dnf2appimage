@@ -8,17 +8,28 @@ HERE="$(dirname "$(readlink -f "${0}")")"
 # PATH
 export PATH="${HERE}:${HERE}/usr/bin/:${HERE}/usr/sbin/:${HERE}/usr/games/:${HERE}/bin/:${HERE}/sbin/${PATH:+:$PATH}"
 
-# LD_LIBRARY_PATH - dynamically add subdirectories of usr/lib and usr/lib64
-if [ -d "${HERE}/usr/lib" ]; then
-  for d in $(find "${HERE}/usr/lib" -type d 2>/dev/null); do
-    export LD_LIBRARY_PATH="${d}:${LD_LIBRARY_PATH}"
-  done
+# LD_LIBRARY_PATH - use pre-generated lib.path if available (faster startup)
+# lib.path contains relative paths with + prefix, one per line
+if [ -f "${HERE}/lib.path" ]; then
+  while IFS= read -r line; do
+    # Remove the + prefix and prepend HERE
+    dir="${line#+}"
+    export LD_LIBRARY_PATH="${HERE}${dir}:${LD_LIBRARY_PATH}"
+  done < "${HERE}/lib.path"
+else
+  # Fallback: dynamically add subdirectories of usr/lib and usr/lib64
+  if [ -d "${HERE}/usr/lib" ]; then
+    for d in $(find "${HERE}/usr/lib" -type d 2>/dev/null); do
+      export LD_LIBRARY_PATH="${d}:${LD_LIBRARY_PATH}"
+    done
+  fi
+  if [ -d "${HERE}/usr/lib64" ]; then
+    for d in $(find "${HERE}/usr/lib64" -type d 2>/dev/null); do
+      export LD_LIBRARY_PATH="${d}:${LD_LIBRARY_PATH}"
+    done
+  fi
 fi
-if [ -d "${HERE}/usr/lib64" ]; then
-  for d in $(find "${HERE}/usr/lib64" -type d 2>/dev/null); do
-    export LD_LIBRARY_PATH="${d}:${LD_LIBRARY_PATH}"
-  done
-fi
+# Add standard library paths (ensure they're always present)
 export LD_LIBRARY_PATH="${HERE}/usr/lib/:${HERE}/usr/lib/x86_64-linux-gnu/:${HERE}/usr/lib64/:${HERE}/lib/:${HERE}/lib64/:${HERE}/lib/x86_64-linux-gnu/${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 #export LD_LIBRARY_PATH=/lib/:/lib64/:/lib/x86_64-linux-gnu/:/usr/lib/:"${LD_LIBRARY_PATH}" # Uncomment to use system libraries
 

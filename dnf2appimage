@@ -5,7 +5,7 @@
 # Licensed under the MIT License.
 # See LICENSE file in the project root for full license information.
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 # Initialize variables
 DEBUG=false
@@ -582,10 +582,24 @@ if [ -f "$SCRIPT_DIR/resources/app-fixes.sh" ]; then
     apply_app_fixes "$APPDIR" "$TOOLBOX_RUN"
 fi
 
+# Generate lib.path file for optimized library loading
+# This lists all directories containing shared libraries, relative to AppDir root
+echo "Generating lib.path for optimized library loading..."
+LIB_PATH_FILE="$APPDIR/lib.path"
+> "$LIB_PATH_FILE"  # Clear/create file
+
+# Find all directories containing .so files and write relative paths
+for libdir in $(find "$APPDIR/usr/lib" "$APPDIR/usr/lib64" "$APPDIR/lib" "$APPDIR/lib64" -name "*.so*" -type f 2>/dev/null | xargs -r dirname | sort -u); do
+    # Convert to relative path from AppDir root (with + prefix like sharun)
+    relpath="${libdir#$APPDIR}"
+    echo "+$relpath" >> "$LIB_PATH_FILE"
+done
+echo "Generated lib.path with $(wc -l < "$LIB_PATH_FILE") library directories"
+
 cp -n resources/AppRun "$APPDIR"
 chmod +x "$APPDIR/AppRun"
 
-# Generating AppImage using uruntime + dwarfs (FUSE-less)
+# Packaging: Use uruntime + dwarfs (FUSE-less AppImage)
 echo "Generating AppImage..."
 # Determine output filename
 ARCH=$(uname -m)
