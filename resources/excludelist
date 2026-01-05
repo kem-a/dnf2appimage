@@ -1,0 +1,287 @@
+# Excludelist for dnf2appimage
+# Packages listed here will not be bundled into AppImages
+# These are base system libraries and services that should always be present on the host
+
+# Core system - these are ALWAYS present on any Linux system
+glibc
+glibc-common
+glibc-minimal-langpack
+glibc-gconv-extra
+bash
+coreutils
+filesystem
+setup
+
+# Low-level system libraries - part of base system
+libgcc
+libstdc++
+libselinux
+libsepol
+pcre2
+zlib
+xz-libs
+bzip2-libs
+libzstd
+lz4-libs
+libcap
+libacl
+libattr
+libcom_err
+libcrypt
+audit-libs
+pam
+pam-libs
+libpwquality
+cracklib
+
+# SSL/Crypto - use system versions for security updates
+openssl
+openssl-libs
+gnutls
+ca-certificates
+crypto-policies
+p11-kit
+p11-kit-trust
+libtasn1
+
+# System services and daemons - run on host, not in AppImage
+systemd
+systemd-libs
+systemd-pam
+systemd-udev
+systemd-networkd
+systemd-resolved
+systemd-shared
+dbus
+dbus-libs
+dbus-common
+dbus-broker
+dbus-daemon
+polkit
+polkit-libs
+polkit-pkla-compat
+rtkit
+upower
+upower-libs
+avahi
+avahi-libs
+avahi-glib
+geoclue2
+ModemManager-glib
+low-memory-monitor
+
+# Audio/Video servers - run on host
+pipewire
+pipewire-libs
+pipewire-alsa
+pipewire-pulseaudio
+pipewire-jack-audio-connection-kit
+pipewire-jack-audio-connection-kit-libs
+pipewire-plugin-libcamera
+wireplumber
+wireplumber-libs
+pulseaudio-libs
+alsa-lib
+
+# Portal and desktop integration - run on host
+xdg-desktop-portal
+xdg-desktop-portal-gtk
+xdg-desktop-portal-gnome
+
+# Device/hardware related - not needed in AppImage
+usbmuxd
+libimobiledevice
+libimobiledevice-glue
+libusbmuxd
+libplist
+bluez-libs
+libgudev
+kmod
+kmod-libs
+device-mapper
+device-mapper-libs
+cryptsetup-libs
+numactl-libs
+
+# Kernel and firmware
+kernel
+linux-firmware
+
+# Display server - always on host
+libX11
+libX11-common
+libX11-xcb
+libxcb
+libXext
+libXau
+libXdmcp
+wayland-client
+wayland-server
+libwayland-client
+libwayland-server
+mesa-libGL
+mesa-libEGL
+mesa-libgbm
+mesa-dri-drivers
+mesa-vulkan-drivers
+libdrm
+libglvnd
+libglvnd-egl
+libglvnd-glx
+libglvnd-gles
+
+# Networking base
+libcurl
+curl
+wget
+NetworkManager
+NetworkManager-libnm
+
+# NSS/NSPR - use system for security
+nss
+nss-util
+nss-softokn
+nss-softokn-freebl
+nss-sysinit
+nspr
+
+# Samba - usually not needed, very large
+samba-client-libs
+samba-common
+samba-common-libs
+libsmbclient
+libwbclient
+libldb
+libtalloc
+libtdb
+libtevent
+
+# Tracker/search - system service
+tinysparql
+libtinysparql
+localsearch
+
+# System utilities
+util-linux
+cpio
+rpm
+rpm-libs
+dnf
+yum
+logrotate
+
+# Fonts - use system fonts
+fontconfig
+freetype
+fonts-filesystem
+google-noto-fonts-common
+dejavu-sans-fonts
+liberation-fonts
+
+# Input methods - system level
+ibus
+ibus-libs
+
+# Accessibility - use system
+at-spi2-core
+at-spi2-atk
+
+# GStreamer and multimedia (most apps don't need full codec stack)
+gstreamer1
+gstreamer1-plugins-base
+gstreamer1-plugins-good
+gstreamer1-plugins-bad-free
+gstreamer1-plugins-bad-free-libs
+gstreamer1-plugins-ugly-free
+
+# Video codecs - rarely needed, use system
+libavcodec-free
+libavformat-free
+libavutil-free
+libswresample-free
+libva
+libvdpau
+libvpx
+libaom
+libdav1d
+svt-av1-libs
+rav1e-libs
+xevd-libs
+xeve-libs
+openh264
+x264-libs
+x265-libs
+libheif
+libjxl
+
+# Audio codecs - rarely needed
+opus
+speex
+flac-libs
+libvorbis
+libogg
+libsndfile
+mpg123-libs
+lame-libs
+twolame-libs
+fdk-aac-free
+opencore-amr
+vo-amrwbenc
+ilbc
+gsm
+codec2
+lpcnetfreedv
+libldac
+liblc3
+libsbc
+
+# Intel media - hardware specific
+intel-mediasdk
+intel-vpl-gpu-rt
+libvpl
+
+# Cameras - rarely needed
+libcamera
+libcamera-ipa
+
+# Misc media
+libchromaprint
+game-music-emu
+libmodplug
+libopenmpt
+libebur128
+aribb24
+libaribcaption
+zvbi
+cdparanoia-libs
+libdvdnav
+libdvdread
+libbluray
+libudfread
+
+# Hardware video
+libva
+libvdpau
+
+# Streaming/network protocols for media
+librist
+srt-libs
+librabbitmq
+openpgm
+zeromq
+ngtcp2-crypto-gnutls
+
+# WebRTC
+webrtc-audio-processing
+
+# FFT - usually system has it
+fftw-libs-single
+
+# Other rarely needed
+bubblewrap
+fuse3
+fuse3-libs
+fuse-common
+logrotate
+kbd
+kbd-legacy

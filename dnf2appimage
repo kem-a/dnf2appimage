@@ -1,15 +1,19 @@
 #!/bin/bash
 
-# dnf2appimage - Convert RPM packages to AppImages
+# dnf2appimage - Convert RPM packages to AppImages or install them from a toolbox container
 # Copyright (c) 2025 Arnis K
 # Licensed under the MIT License.
 # See LICENSE file in the project root for full license information.
 
-VERSION="1.0.0"
+VERSION="1.2.0"
 
 # Initialize variables
 DEBUG=false
+MINIMAL=true
 PKG=""
+
+# Get host architecture
+HOST_ARCH=$(uname -m)
 
 # Function to show help
 show_help() {
@@ -19,6 +23,7 @@ show_help() {
   echo "  --help     Show this help message"
   echo "  --version  Show version information"
   echo "  --debug    Keep build directory (.AppDir) after successful build"
+  echo "  --full     Bundle all dependencies (default: only bundle deps not on host)"
   echo ""
   exit 0
 }
@@ -35,6 +40,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --debug)
       DEBUG=true
+      shift
+      ;;
+    --full)
+      MINIMAL=false
       shift
       ;;
     -*)
@@ -57,13 +66,157 @@ fi
 
 APPDIR="$PKG.AppDir"
 
-# Detect if running inside toolbox or another container
-if [ -f /run/.toolboxenv ] || [ -f /run/.containerenv ]; then
-  TOOLBOX_RUN=""
-elif command -v toolbox >/dev/null 2>&1; then
-  TOOLBOX_RUN="toolbox run"
-else
-  TOOLBOX_RUN=""
+# Function to detect Linux distribution
+detect_distro() {
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    case "$ID" in
+      fedora|rhel|centos|rocky|alma|nobara)
+        echo "rhel"
+        ;;
+      debian|ubuntu|linuxmint|pop|elementary|zorin|kali)
+        echo "debian"
+        ;;
+      arch|manjaro|endeavouros|garuda|artix)
+        echo "arch"
+        ;;
+      opensuse*|suse*)
+        echo "suse"
+        ;;
+      *)
+        # Check ID_LIKE for derivatives
+        case "$ID_LIKE" in
+          *fedora*|*rhel*)
+            echo "rhel"
+            ;;
+          *debian*|*ubuntu*)
+            echo "debian"
+            ;;
+          *arch*)
+            echo "arch"
+            ;;
+          *suse*)
+            echo "suse"
+            ;;
+          *)
+            echo "unknown"
+            ;;
+        esac
+        ;;
+    esac
+  else
+    echo "unknown"
+  fi
+}
+
+# Function to install toolbox
+install_toolbox() {
+  local distro="$1"
+  echo ""
+  echo "Toolbox is required but not installed."
+  echo "Detected distribution family: $distro"
+  echo ""
+  
+  case "$distro" in
+    rhel)
+      echo "To install toolbox on Fedora/RHEL-based systems, run:"
+      echo "  sudo dnf install toolbox"
+      ;;
+    debian)
+      echo "To install toolbox on Debian/Ubuntu-based systems, run:"
+      echo "  sudo apt install podman-toolbox"
+      echo ""
+      echo "Note: You may need to enable the backports repository on older Debian versions."
+      ;;
+    arch)
+      echo "To install toolbox on Arch-based systems, run:"
+      echo "  sudo pacman -S toolbox"
+      ;;
+    suse)
+      echo "To install toolbox on openSUSE, run:"
+      echo "  sudo zypper install toolbox"
+      ;;
+    *)
+      echo "Could not detect your distribution."
+      echo "Please install 'toolbox' using your package manager."
+      echo "Toolbox requires podman to be installed as well."
+      ;;
+  esac
+  
+  echo ""
+  read -p "Would you like to attempt automatic installation? [y/N] " -n 1 -r
+  echo ""
+  
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    case "$distro" in
+      rhel)
+        sudo dnf install -y toolbox || { echo "Error: Failed to install toolbox"; exit 1; }
+        ;;
+      debian)
+        sudo apt update && sudo apt install -y podman-toolbox || { echo "Error: Failed to install toolbox"; exit 1; }
+        ;;
+      arch)
+        sudo pacman -S --noconfirm toolbox || { echo "Error: Failed to install toolbox"; exit 1; }
+        ;;
+      suse)
+        sudo zypper install -y toolbox || { echo "Error: Failed to install toolbox"; exit 1; }
+        ;;
+      *)
+        echo "Error: Cannot auto-install on unknown distribution"
+        exit 1
+        ;;
+    esac
+    echo "Toolbox installed successfully!"
+  else
+    echo "Please install toolbox manually and run this script again."
+    exit 1
+  fi
+}
+
+# Function to create toolbox container
+create_toolbox_container() {
+  echo ""
+  echo "No toolbox container found."
+  read -p "Would you like to create a default Fedora toolbox container? [Y/n] " -n 1 -r
+  echo ""
+  
+  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    echo "Creating toolbox container..."
+    if toolbox create -y; then
+      echo "Toolbox container created successfully!"
+    else
+      echo "Error: Failed to create toolbox container"
+      exit 1
+    fi
+  else
+    echo "A toolbox container is required to run this script."
+    echo "Create one manually with: toolbox create"
+    exit 1
+  fi
+}
+
+# Always use toolbox for consistent environment
+# Check if toolbox is installed
+if ! command -v toolbox >/dev/null 2>&1; then
+  distro=$(detect_distro)
+  install_toolbox "$distro"
+fi
+
+# Check if a toolbox container exists
+if ! toolbox list 2>/dev/null | grep -q "fedora-toolbox"; then
+  create_toolbox_container
+fi
+
+TOOLBOX_RUN="toolbox run"
+
+# Get script directory for resources
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load excludelist (packages that should never be bundled)
+EXCLUDELIST=""
+if [ -f "$SCRIPT_DIR/resources/excludelist" ]; then
+  # Read excludelist, removing comments and empty lines
+  EXCLUDELIST=$(grep -v '^#' "$SCRIPT_DIR/resources/excludelist" | grep -v '^$' | sort -u)
 fi
 
 # Preparing
@@ -79,35 +232,113 @@ if [ -d "tmp" ]; then
 fi
 mkdir "tmp"
 
-# Download all packages including dependencies
+# Build list of installed packages on host for minimal mode
+HOST_INSTALLED_PKGS=""
+if [ "$MINIMAL" = true ]; then
+  echo "Minimal mode: checking installed packages on host..."
+  HOST_INSTALLED_PKGS=$(rpm -qa --qf "%{NAME}\n" 2>/dev/null | sort -u)
+fi
+
+# Function to extract package name from RPM filename or URL
+extract_pkg_name() {
+  local input="$1"
+  # Get basename if it's a URL or path
+  local filename
+  filename=$(basename "$input")
+  # Remove .rpm extension and extract package name (handle epoch in filename)
+  # Pattern: name-[epoch:]version-release.arch.rpm
+  echo "$filename" | sed 's/\.rpm$//' | sed 's/\.[^.]*$//' | sed 's/-[0-9][^-]*-[^-]*$//'
+}
+
+# Resolve dependencies and get URLs without downloading
+echo "Resolving dependencies for $HOST_ARCH architecture..."
 LOCAL_RPM=""
 if [ -f "$PKG" ]; then
   echo "Local RPM detected: $PKG"
   LOCAL_RPM="$PKG"
   # Get package name from RPM file
   PKG_NAME=$($TOOLBOX_RUN rpm -qp --qf "%{NAME}" "$PKG")
-  if ! $TOOLBOX_RUN dnf download --resolve --quiet --destdir="$PWD/tmp" "$PKG_NAME" 2>/dev/null; then
-    echo "Error: Failed to download dependencies for $PKG_NAME"
-    rm -rf tmp "$APPDIR"
-    exit 1
-  fi
-  # Remove any downloaded versions of the main package (we'll use the local one)
-  for downloaded_rpm in tmp/*.rpm; do
-    downloaded_name=$($TOOLBOX_RUN rpm -qp --qf "%{NAME}" "$downloaded_rpm" 2>/dev/null)
-    if [ "$downloaded_name" = "$PKG_NAME" ]; then
-      echo "Removing downloaded $downloaded_rpm (using local RPM instead)"
-      rm -f "$downloaded_rpm"
-    fi
-  done
-  # Copy local RPM to tmp (will be extracted last)
-  cp "$PKG" tmp/
+  ALL_URLS=$($TOOLBOX_RUN dnf5 download --resolve --url --arch="$HOST_ARCH" --arch=noarch "$PKG_NAME" 2>/dev/null)
 else
   PKG_NAME="$PKG"
-  if ! $TOOLBOX_RUN dnf download --resolve --quiet --destdir="$PWD/tmp" "$PKG" 2>/dev/null; then
-    echo "Error: Package '$PKG' not found or failed to download"
-    rm -rf tmp "$APPDIR"
-    exit 1
+  ALL_URLS=$($TOOLBOX_RUN dnf5 download --resolve --url --arch="$HOST_ARCH" --arch=noarch "$PKG" 2>/dev/null)
+fi
+
+if [ -z "$ALL_URLS" ]; then
+  echo "Error: Package '$PKG' not found or failed to resolve dependencies"
+  rm -rf tmp "$APPDIR"
+  exit 1
+fi
+
+total_count=$(echo "$ALL_URLS" | wc -l)
+echo "Resolved $total_count packages"
+
+# Filter URLs based on host packages and excludelist
+FILTERED_URLS=""
+skipped_host=0
+skipped_exclude=0
+skipped_main=0
+
+while IFS= read -r url; do
+  [ -z "$url" ] && continue
+  pkg_name=$(extract_pkg_name "$url")
+  
+  # Always include the main package (will be replaced with local if provided)
+  if [ "$pkg_name" = "$PKG_NAME" ]; then
+    if [ -n "$LOCAL_RPM" ]; then
+      ((skipped_main++))
+      continue
+    fi
+    FILTERED_URLS="$FILTERED_URLS"$'\n'"$url"
+    continue
   fi
+  
+  # Check excludelist
+  if [ -n "$EXCLUDELIST" ] && echo "$EXCLUDELIST" | grep -qx "$pkg_name"; then
+    ((skipped_exclude++))
+    continue
+  fi
+  
+  # Check host packages (minimal mode)
+  if [ "$MINIMAL" = true ] && [ -n "$HOST_INSTALLED_PKGS" ]; then
+    if echo "$HOST_INSTALLED_PKGS" | grep -qx "$pkg_name"; then
+      ((skipped_host++))
+      continue
+    fi
+  fi
+  
+  FILTERED_URLS="$FILTERED_URLS"$'\n'"$url"
+done <<< "$ALL_URLS"
+
+# Remove leading newline
+FILTERED_URLS=$(echo "$FILTERED_URLS" | sed '/^$/d')
+
+if [ "$MINIMAL" = true ]; then
+  echo "Skipped $skipped_host packages already on host"
+fi
+if [ -n "$EXCLUDELIST" ]; then
+  echo "Skipped $skipped_exclude packages from excludelist"
+fi
+
+download_count=$(echo "$FILTERED_URLS" | grep -c . || echo 0)
+echo "Downloading $download_count packages..."
+
+# Download filtered packages
+if [ -n "$FILTERED_URLS" ]; then
+  while IFS= read -r url; do
+    [ -z "$url" ] && continue
+    filename=$(basename "$url")
+    echo "Downloading $filename"
+    if ! curl -sL -o "tmp/$filename" "$url"; then
+      echo "Warning: Failed to download $url"
+    fi
+  done <<< "$FILTERED_URLS"
+fi
+
+# Copy local RPM to tmp if provided
+if [ -n "$LOCAL_RPM" ]; then
+  cp "$LOCAL_RPM" tmp/
+  echo "Added local RPM: $(basename "$LOCAL_RPM")"
 fi
 
 # Check if any RPMs were downloaded
@@ -242,6 +473,39 @@ if [ -n "$desktop_file_path" ]; then
     fi
 fi
 
+# Fix DBus-activated apps (gapplication launch) - replace with actual binary
+if [ -n "$desktop_file_path" ]; then
+    real_desktop_file=$(readlink -f "$desktop_file_path")
+    exec_line=$(grep "^Exec=" "$real_desktop_file" | head -n 1)
+    
+    # Check if it uses gapplication launch
+    if echo "$exec_line" | grep -q "gapplication launch"; then
+        app_id=$(echo "$exec_line" | sed 's/.*gapplication launch //' | awk '{print $1}')
+        echo "DBus app detected: $app_id"
+        
+        # Try to find the actual binary
+        actual_binary=""
+        # Check common locations for the binary
+        for bin_path in "$APPDIR/usr/bin/$PKG_NAME" "$APPDIR/usr/bin/$app_id" "$APPDIR/usr/share/$app_id/$app_id"; do
+            if [ -f "$bin_path" ] || [ -L "$bin_path" ]; then
+                actual_binary=$(basename "$bin_path")
+                echo "Found actual binary: $actual_binary"
+                break
+            fi
+        done
+        
+        if [ -n "$actual_binary" ]; then
+            # Replace gapplication launch with actual binary
+            sed -i "s|^Exec=gapplication launch [^ ]*|Exec=$actual_binary|" "$real_desktop_file"
+            echo "Fixed Exec to use $actual_binary instead of gapplication launch"
+        fi
+        
+        # Remove DBusActivatable=true as it doesn't work in AppImage
+        sed -i '/^DBusActivatable=true/d' "$real_desktop_file"
+        echo "Removed DBusActivatable=true from desktop file"
+    fi
+fi
+
 # Adding metadata from metainfo.xml if it exists
 metainfo_file=$(find "$APPDIR/usr/share/metainfo" -name "*.xml" -print -quit)
 if [ -n "$metainfo_file" ] && [ -n "$desktop_file_path" ]; then
@@ -312,10 +576,16 @@ if [ -d "$APPDIR/usr/share/glib-2.0/schemas" ]; then
     fi
 fi
 
+# Apply app-specific fixes (GJS apps, GIMP, etc.)
+if [ -f "$SCRIPT_DIR/resources/app-fixes.sh" ]; then
+    source "$SCRIPT_DIR/resources/app-fixes.sh"
+    apply_app_fixes "$APPDIR" "$TOOLBOX_RUN"
+fi
+
 cp -n resources/AppRun "$APPDIR"
 chmod +x "$APPDIR/AppRun"
 
-# Generating AppImage
+# Generating AppImage using uruntime + dwarfs (FUSE-less)
 echo "Generating AppImage..."
 # Determine output filename
 ARCH=$(uname -m)
@@ -326,13 +596,60 @@ if [ -f "$OUTPUT_APPIMAGE" ]; then
   rm "$OUTPUT_APPIMAGE"
 fi
 
-if $TOOLBOX_RUN appimagetool -n "$APPDIR" "$OUTPUT_APPIMAGE"; then
-  if [ -f "$OUTPUT_APPIMAGE" ]; then
-    chmod -x "$OUTPUT_APPIMAGE"
-    echo "Removed executable bit from $OUTPUT_APPIMAGE"
-  fi
+# Check for uruntime - download if not available
+URUNTIME_URL="https://github.com/VHSgunzo/uruntime/releases/latest/download/uruntime-appimage-dwarfs-${ARCH}"
+URUNTIME_PATH="$SCRIPT_DIR/resources/uruntime-${ARCH}"
 
-  echo "Done."
+if [ ! -f "$URUNTIME_PATH" ]; then
+  echo "Downloading uruntime..."
+  if ! curl -L -o "$URUNTIME_PATH" "$URUNTIME_URL" 2>/dev/null; then
+    echo "Error: Failed to download uruntime from $URUNTIME_URL"
+    exit 1
+  fi
+  chmod +x "$URUNTIME_PATH"
+fi
+
+# Check for mkdwarfs - download dwarfs-universal if not available
+MKDWARFS_PATH="$SCRIPT_DIR/resources/mkdwarfs"
+MKDWARFS_CMD=""
+
+if [ -f "$MKDWARFS_PATH" ]; then
+  MKDWARFS_CMD="$MKDWARFS_PATH"
+elif command -v mkdwarfs >/dev/null 2>&1; then
+  MKDWARFS_CMD="mkdwarfs"
+elif $TOOLBOX_RUN command -v mkdwarfs >/dev/null 2>&1; then
+  MKDWARFS_CMD="$TOOLBOX_RUN mkdwarfs"
+else
+  echo "mkdwarfs not found. Downloading dwarfs-universal..."
+  # Get latest version
+  DWARFS_VERSION=$(curl -sI "https://github.com/mhx/dwarfs/releases/latest" | grep -i location | sed 's/.*tag\/v//' | tr -d '\r\n')
+  DWARFS_URL="https://github.com/mhx/dwarfs/releases/download/v${DWARFS_VERSION}/dwarfs-universal-${DWARFS_VERSION}-Linux-${ARCH}"
+  if ! curl -L -o "$MKDWARFS_PATH" "$DWARFS_URL" 2>/dev/null; then
+    echo "Error: Failed to download dwarfs-universal from $DWARFS_URL"
+    exit 1
+  fi
+  chmod +x "$MKDWARFS_PATH"
+  MKDWARFS_CMD="$MKDWARFS_PATH"
+fi
+
+# Create DwarFS image from AppDir
+DWARFS_IMAGE="${PKG_NAME}.dwarfs"
+echo "Creating DwarFS image from AppDir..."
+if ! $MKDWARFS_CMD -i "$APPDIR" -o "$DWARFS_IMAGE" --no-progress -l5; then
+  echo "Error: Failed to create DwarFS image"
+  exit 1
+fi
+
+# Combine uruntime with DwarFS image to create AppImage
+echo "Creating AppImage with uruntime..."
+cat "$URUNTIME_PATH" "$DWARFS_IMAGE" > "$OUTPUT_APPIMAGE"
+chmod +x "$OUTPUT_APPIMAGE"
+
+# Cleanup temporary DwarFS image
+rm -f "$DWARFS_IMAGE"
+
+if [ -f "$OUTPUT_APPIMAGE" ]; then
+  echo "Done: $OUTPUT_APPIMAGE"
   # Cleanup build directory unless debug is passed
   if [ "$DEBUG" = false ]; then
     echo "Cleaning up build directory $APPDIR..."
