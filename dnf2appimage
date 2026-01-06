@@ -173,24 +173,60 @@ install_toolbox() {
   fi
 }
 
+# Function to get the latest stable Fedora release
+get_latest_fedora_release() {
+  # Try to get from Fedora releases API
+  local latest
+  latest=$(curl -sL "https://fedoraproject.org/releases.json" 2>/dev/null | \
+    grep -oE '"version": *"[0-9]+"' | head -n 1 | grep -oE '[0-9]+')
+  
+  if [ -n "$latest" ]; then
+    echo "$latest"
+    return
+  fi
+  
+  # Fallback: calculate based on current date
+  # Fedora releases ~every 6 months: F40 = May 2024, F41 = Oct 2024, F42 = Apr 2025, etc.
+  local year month fedora_version
+  year=$(date +%Y)
+  month=$(date +%-m)
+  # Base: Fedora 40 released in May 2024
+  # Each 6 months = +1 version
+  local months_since_f40=$(( (year - 2024) * 12 + month - 5 ))
+  fedora_version=$(( 40 + months_since_f40 / 6 ))
+  
+  # Cap at reasonable maximum (don't go too far into future)
+  if [ "$fedora_version" -gt 45 ]; then
+    fedora_version=45
+  fi
+  
+  echo "$fedora_version"
+}
+
 # Function to create toolbox container
 create_toolbox_container() {
   echo ""
-  echo "No toolbox container found."
-  read -p "Would you like to create a default Fedora toolbox container? [Y/n] " -n 1 -r
+  echo "No Fedora toolbox container found."
+  
+  # Get the latest Fedora release
+  local fedora_release
+  fedora_release=$(get_latest_fedora_release)
+  echo "Latest Fedora release detected: $fedora_release"
+  
+  read -p "Would you like to create a Fedora $fedora_release toolbox container? [Y/n] " -n 1 -r
   echo ""
   
   if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-    echo "Creating toolbox container..."
-    if toolbox create -y; then
+    echo "Creating Fedora $fedora_release toolbox container..."
+    if toolbox create --distro fedora --release "$fedora_release" -y; then
       echo "Toolbox container created successfully!"
     else
       echo "Error: Failed to create toolbox container"
       exit 1
     fi
   else
-    echo "A toolbox container is required to run this script."
-    echo "Create one manually with: toolbox create"
+    echo "A Fedora toolbox container is required to run this script."
+    echo "Create one manually with: toolbox create --distro fedora --release <version>"
     exit 1
   fi
 }
@@ -202,12 +238,14 @@ if ! command -v toolbox >/dev/null 2>&1; then
   install_toolbox "$distro"
 fi
 
-# Check if a toolbox container exists
-if ! toolbox list 2>/dev/null | grep -q "fedora-toolbox"; then
+# Check if a Fedora toolbox container exists and get its name
+FEDORA_CONTAINER=$(toolbox list -c 2>/dev/null | grep -oE "fedora-toolbox-[0-9]+" | head -n 1)
+if [ -z "$FEDORA_CONTAINER" ]; then
   create_toolbox_container
+  FEDORA_CONTAINER=$(toolbox list -c 2>/dev/null | grep -oE "fedora-toolbox-[0-9]+" | head -n 1)
 fi
 
-TOOLBOX_RUN="toolbox run"
+TOOLBOX_RUN="toolbox run --container $FEDORA_CONTAINER"
 
 # Get script directory for resources
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
