@@ -186,35 +186,15 @@ ibus-libs
 at-spi2-core
 at-spi2-atk
 
-# GStreamer and multimedia (most apps don't need full codec stack)
+# GStreamer core only - plugins should be bundled for media-rich apps
+# Note: Many GNOME apps (Epiphany, Videos, etc.) need gstreamer plugins
 gstreamer1
-gstreamer1-plugins-base
-gstreamer1-plugins-good
-gstreamer1-plugins-bad-free
-gstreamer1-plugins-bad-free-libs
-gstreamer1-plugins-ugly-free
 
-# Video codecs - rarely needed, use system
-libavcodec-free
-libavformat-free
-libavutil-free
-libswresample-free
+# Hardware video acceleration - use system drivers
 libva
 libvdpau
-libvpx
-libaom
-libdav1d
-svt-av1-libs
-rav1e-libs
-xevd-libs
-xeve-libs
-openh264
-x264-libs
-x265-libs
-libheif
-libjxl
 
-# Audio codecs - rarely needed
+# Audio codecs - commonly available on host systems
 opus
 speex
 flac-libs

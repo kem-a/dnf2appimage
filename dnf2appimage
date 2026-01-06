@@ -173,34 +173,74 @@ install_toolbox() {
   fi
 }
 
-# Function to get the latest stable Fedora release
-get_latest_fedora_release() {
-  # Try to get from Fedora releases API
-  local latest
-  latest=$(curl -sL "https://fedoraproject.org/releases.json" 2>/dev/null | \
-    grep -oE '"version": *"[0-9]+"' | head -n 1 | grep -oE '[0-9]+')
+# Fedora version to glibc version mapping
+# This maps Fedora releases to their glibc versions for compatibility checking
+# Format: fedora_version:glibc_major.glibc_minor
+FEDORA_GLIBC_MAP="
+43:2.42
+42:2.41
+41:2.40
+40:2.39
+39:2.38
+38:2.37
+37:2.36
+"
+
+# Function to get host glibc version
+get_host_glibc_version() {
+  # Try ldd --version first
+  local glibc_version
+  glibc_version=$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
   
-  if [ -n "$latest" ]; then
-    echo "$latest"
+  if [ -n "$glibc_version" ]; then
+    echo "$glibc_version"
     return
   fi
   
-  # Fallback: calculate based on current date
-  # Fedora releases ~every 6 months: F40 = May 2024, F41 = Oct 2024, F42 = Apr 2025, etc.
-  local year month fedora_version
-  year=$(date +%Y)
-  month=$(date +%-m)
-  # Base: Fedora 40 released in May 2024
-  # Each 6 months = +1 version
-  local months_since_f40=$(( (year - 2024) * 12 + month - 5 ))
-  fedora_version=$(( 40 + months_since_f40 / 6 ))
+  # Fallback: check libc.so.6 directly
+  glibc_version=$(strings /lib/x86_64-linux-gnu/libc.so.6 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V | tail -1 | sed 's/GLIBC_//')
   
-  # Cap at reasonable maximum (don't go too far into future)
-  if [ "$fedora_version" -gt 45 ]; then
-    fedora_version=45
+  if [ -n "$glibc_version" ]; then
+    echo "$glibc_version"
+    return
   fi
   
-  echo "$fedora_version"
+  # Default fallback - assume relatively recent
+  echo "2.38"
+}
+
+# Function to compare version strings (returns 0 if v1 <= v2)
+version_lte() {
+  [ "$1" = "$(echo -e "$1\n$2" | sort -V | head -n1)" ]
+}
+
+# Function to get best compatible Fedora version for host glibc
+get_compatible_fedora_release() {
+  local host_glibc="$1"
+  local best_fedora=""
+  local best_glibc=""
+  
+  # Parse the mapping and find the highest Fedora version with glibc <= host_glibc
+  while IFS=: read -r fedora_ver glibc_ver; do
+    # Skip empty lines
+    [ -z "$fedora_ver" ] && continue
+    
+    # Check if this Fedora's glibc is compatible (less than or equal to host)
+    if version_lte "$glibc_ver" "$host_glibc"; then
+      # Take the highest compatible Fedora version
+      if [ -z "$best_fedora" ] || [ "$fedora_ver" -gt "$best_fedora" ]; then
+        best_fedora="$fedora_ver"
+        best_glibc="$glibc_ver"
+      fi
+    fi
+  done <<< "$FEDORA_GLIBC_MAP"
+  
+  if [ -n "$best_fedora" ]; then
+    echo "$best_fedora"
+  else
+    # Fallback to oldest supported if nothing matches
+    echo "37"
+  fi
 }
 
 # Function to create toolbox container
@@ -208,10 +248,19 @@ create_toolbox_container() {
   echo ""
   echo "No Fedora toolbox container found."
   
-  # Get the latest Fedora release
+  # Get host glibc version and find compatible Fedora
+  local host_glibc
+  host_glibc=$(get_host_glibc_version)
+  echo "Host glibc version: $host_glibc"
+  
   local fedora_release
-  fedora_release=$(get_latest_fedora_release)
-  echo "Latest Fedora release detected: $fedora_release"
+  fedora_release=$(get_compatible_fedora_release "$host_glibc")
+  
+  # Get the glibc version for this Fedora release
+  local fedora_glibc
+  fedora_glibc=$(echo "$FEDORA_GLIBC_MAP" | grep "^$fedora_release:" | cut -d: -f2)
+  
+  echo "Selected Fedora $fedora_release (glibc $fedora_glibc) for compatibility"
   
   read -p "Would you like to create a Fedora $fedora_release toolbox container? [Y/n] " -n 1 -r
   echo ""
@@ -231,6 +280,39 @@ create_toolbox_container() {
   fi
 }
 
+# Function to find the best compatible Fedora container from existing ones
+find_compatible_container() {
+  local host_glibc="$1"
+  local best_container=""
+  local best_version=0
+  
+  # Get all Fedora toolbox containers
+  while read -r container; do
+    [ -z "$container" ] && continue
+    
+    # Extract version number from container name (e.g., fedora-toolbox-41 -> 41)
+    local version
+    version=$(echo "$container" | grep -oE '[0-9]+$')
+    [ -z "$version" ] && continue
+    
+    # Get glibc version for this Fedora release
+    local container_glibc
+    container_glibc=$(echo "$FEDORA_GLIBC_MAP" | grep "^$version:" | cut -d: -f2)
+    [ -z "$container_glibc" ] && continue
+    
+    # Check if this container's glibc is compatible
+    if version_lte "$container_glibc" "$host_glibc"; then
+      # Take the highest compatible version
+      if [ "$version" -gt "$best_version" ]; then
+        best_version="$version"
+        best_container="$container"
+      fi
+    fi
+  done <<< "$(toolbox list -c 2>/dev/null | grep -oE 'fedora-toolbox-[0-9]+')"
+  
+  echo "$best_container"
+}
+
 # Always use toolbox for consistent environment
 # Check if toolbox is installed
 if ! command -v toolbox >/dev/null 2>&1; then
@@ -238,11 +320,28 @@ if ! command -v toolbox >/dev/null 2>&1; then
   install_toolbox "$distro"
 fi
 
-# Check if a Fedora toolbox container exists and get its name
-FEDORA_CONTAINER=$(toolbox list -c 2>/dev/null | grep -oE "fedora-toolbox-[0-9]+" | head -n 1)
+# Get host glibc version for compatibility checking
+HOST_GLIBC=$(get_host_glibc_version)
+
+# Check if a compatible Fedora toolbox container exists
+FEDORA_CONTAINER=$(find_compatible_container "$HOST_GLIBC")
+
 if [ -z "$FEDORA_CONTAINER" ]; then
+  # Check if any Fedora container exists but is incompatible
+  ANY_CONTAINER=$(toolbox list -c 2>/dev/null | grep -oE "fedora-toolbox-[0-9]+" | head -n 1)
+  if [ -n "$ANY_CONTAINER" ]; then
+    container_ver=$(echo "$ANY_CONTAINER" | grep -oE '[0-9]+$')
+    container_glibc=$(echo "$FEDORA_GLIBC_MAP" | grep "^$container_ver:" | cut -d: -f2)
+    echo "Warning: Existing container $ANY_CONTAINER (glibc $container_glibc) is incompatible with host glibc $HOST_GLIBC"
+    echo "A compatible container is needed for AppImage to work on this system."
+  fi
   create_toolbox_container
-  FEDORA_CONTAINER=$(toolbox list -c 2>/dev/null | grep -oE "fedora-toolbox-[0-9]+" | head -n 1)
+  FEDORA_CONTAINER=$(find_compatible_container "$HOST_GLIBC")
+  
+  # If still no compatible container, fall back to any Fedora container
+  if [ -z "$FEDORA_CONTAINER" ]; then
+    FEDORA_CONTAINER=$(toolbox list -c 2>/dev/null | grep -oE "fedora-toolbox-[0-9]+" | head -n 1)
+  fi
 fi
 
 TOOLBOX_RUN="toolbox run --container $FEDORA_CONTAINER"
