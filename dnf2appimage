@@ -524,6 +524,46 @@ fi
 rm -rf tmp
 
 #
+# Bundle known dlopen'd dependencies that aren't declared in RPM requires
+# These are libraries loaded at runtime via dlopen() and missed by dependency resolution
+#
+DLOPEN_DEPS=""
+
+# Qt6 apps need libb2 (BLAKE2 hashing - dlopen'd by Qt6Core)
+if find "$APPDIR" -name "libQt6Core.so*" -print -quit 2>/dev/null | grep -q .; then
+    echo "Qt6 detected, adding known dlopen'd dependencies..."
+    DLOPEN_DEPS="$DLOPEN_DEPS libb2"
+fi
+
+# Add more framework-specific dlopen'd deps here as discovered
+
+if [ -n "$DLOPEN_DEPS" ]; then
+    echo "Fetching dlopen'd dependencies: $DLOPEN_DEPS"
+    mkdir -p tmp
+    
+    for pkg in $DLOPEN_DEPS; do
+        # Skip if already in AppDir
+        if find "$APPDIR" -name "${pkg}.so*" -print -quit 2>/dev/null | grep -q .; then
+            echo "  $pkg already bundled"
+            continue
+        fi
+        
+        echo "  Downloading: $pkg"
+        pkg_url=$($TOOLBOX_RUN dnf5 download --url --arch="$HOST_ARCH" --arch=noarch "$pkg" 2>/dev/null | head -1)
+        if [ -n "$pkg_url" ]; then
+            filename=$(basename "$pkg_url")
+            curl -sL -o "tmp/$filename" "$pkg_url"
+            echo "  Extracting: $filename"
+            $TOOLBOX_RUN rpm2cpio "tmp/$filename" | (cd "$APPDIR" && $TOOLBOX_RUN cpio -idm)
+        else
+            echo "  Warning: Could not find package for $pkg"
+        fi
+    done
+    
+    rm -rf tmp
+fi
+
+#
 # Finalizing AppDir folder by adding required files
 #
 
