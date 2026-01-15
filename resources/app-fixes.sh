@@ -16,6 +16,10 @@ apply_app_fixes() {
     # GJS apps use imports.package.init({ prefix: "/usr" }) which is hardcoded
     fix_gjs_apps "$APPDIR"
     
+    # Fix Meson Python apps - patch hardcoded paths
+    # Python apps built with Meson have hardcoded pkgdatadir paths
+    fix_meson_python_apps "$APPDIR"
+    
     # Fix GIMP interpreter files and setup environment
     fix_gimp_interpreters "$APPDIR"
     setup_gimp_env "$APPDIR"
@@ -67,6 +71,46 @@ WRAPPER_EOF
             sed -i '1a\const GLib = imports.gi.GLib;' "${gjs_script}.original"
             sed -i 's#prefix: "/usr"#prefix: GLib.getenv("APPIMAGE_USR") || "/usr"#' "${gjs_script}.original"
             echo "GJS app patched for relocatability"
+        fi
+    done
+}
+
+# Meson Python apps have hardcoded paths like:
+# pkgdatadir = '/usr/share/appname'
+# localedir = '/usr/share/locale'
+# These need to be made relative to the script location
+fix_meson_python_apps() {
+    local APPDIR="$1"
+    
+    for py_script in "$APPDIR/usr/bin/"*; do
+        [ -f "$py_script" ] || continue
+        
+        # Check if it's a Python script with hardcoded pkgdatadir
+        if head -1 "$py_script" | grep -q "python" && grep -q "^pkgdatadir = '/usr/share/" "$py_script"; then
+            echo "Patching Meson Python app: $(basename "$py_script")"
+            
+            # Get the app name from pkgdatadir
+            app_name=$(grep "^pkgdatadir = " "$py_script" | sed "s/.*'\\/usr\\/share\\/\\([^']*\\)'.*/\\1/")
+            
+            # Create a patched version that determines paths at runtime
+            # Replace the hardcoded paths with dynamic path computation
+            sed -i "
+                # Add imports at the top (after the shebang and any encoding line)
+                /^#!/ {
+                    a\\
+import os as _appimage_os
+                }
+                
+                # Replace hardcoded pkgdatadir
+                s|^pkgdatadir = '/usr/share/$app_name'|# AppImage: compute pkgdatadir relative to script location\\
+_script_dir = _appimage_os.path.dirname(_appimage_os.path.realpath(__file__))\\
+pkgdatadir = _appimage_os.path.join(_script_dir, '..', 'share', '$app_name')|
+                
+                # Replace hardcoded localedir
+                s|^localedir = '/usr/share/locale'|localedir = _appimage_os.path.join(_script_dir, '..', 'share', 'locale')|
+            " "$py_script"
+            
+            echo "Meson Python app patched for relocatability"
         fi
     done
 }
