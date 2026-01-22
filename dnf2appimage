@@ -631,25 +631,57 @@ if [ ! "$(find "$APPDIR" -maxdepth 1 -name '*.desktop' -print -quit)" ]; then
 fi
 
 # Adding icon file in AppDir
-# Try to find icon name from desktop file
+# Find icon by exact name from desktop file - no fallbacks
 desktop_file_path=$(find "$APPDIR" -maxdepth 1 -name "*.desktop" -print -quit)
 if [ -n "$desktop_file_path" ]; then
     icon_name=$(grep "^Icon=" "$desktop_file_path" | head -n 1 | cut -d "=" -f 2)
     if [ -n "$icon_name" ]; then
         # If it's a path, get the basename
         icon_base=$(basename "$icon_name")
-        # Remove extension if it has one
-        icon_no_ext="${icon_base%.*}"
+        # Remove only actual image extensions (.png, .svg, .xpm), not dots in icon names like org.gnome.Epiphany
+        icon_no_ext=$(echo "$icon_base" | sed 's/\.\(png\|svg\|xpm\|ico\)$//')
         
-        # Search for the icon in common locations
-        found_icon=$(find "$APPDIR/usr/share/icons" "$APPDIR/usr/share/pixmaps" -type f \( -name "$icon_base" -o -name "$icon_no_ext.png" -o -name "$icon_no_ext.svg" -o -name "$icon_no_ext.xpm" \) 2>/dev/null | head -n 1)
+        # Search for the icon by exact name in standard locations
+        found_icon=""
+        
+        # Build list of search directories that exist
+        search_dirs=""
+        for dir in "$APPDIR/usr/share/icons" "$APPDIR/usr/share/pixmaps"; do
+            [ -d "$dir" ] && search_dirs="$search_dirs $dir"
+        done
+        
+        if [ -n "$search_dirs" ]; then
+            # Find exact match by icon name (prefer SVG over PNG)
+            found_icon=$(find $search_dirs -type f -name "${icon_no_ext}.svg" 2>/dev/null | head -n 1)
+            
+            # Try PNG if no SVG found (prefer larger sizes)
+            if [ -z "$found_icon" ]; then
+                for size in 256x256 128x128 96x96 64x64 48x48 scalable; do
+                    found_icon=$(find $search_dirs -type f -path "*/${size}/*" -name "${icon_no_ext}.png" 2>/dev/null | head -n 1)
+                    [ -n "$found_icon" ] && break
+                done
+            fi
+            
+            # Try any PNG matching icon name
+            if [ -z "$found_icon" ]; then
+                found_icon=$(find $search_dirs -type f -name "${icon_no_ext}.png" 2>/dev/null | head -n 1)
+            fi
+        fi
+        
+        # If not found in standard locations, search entire AppDir (some apps store icons in non-standard places)
+        if [ -z "$found_icon" ]; then
+            found_icon=$(find "$APPDIR" -type f -name "${icon_no_ext}.svg" 2>/dev/null | head -n 1)
+        fi
+        if [ -z "$found_icon" ]; then
+            found_icon=$(find "$APPDIR" -type f -name "${icon_no_ext}.png" 2>/dev/null | head -n 1)
+        fi
         
         if [ -n "$found_icon" ]; then
             symlink_name=$(basename "$found_icon")
-            rel_icon_path=${found_icon#"$APPDIR"/}
-            ln -s "$rel_icon_path" "$APPDIR/$symlink_name"
+            # Copy icon to AppDir root (better compatibility with thumbnailers)
+            cp "$found_icon" "$APPDIR/$symlink_name"
             ln -s "$symlink_name" "$APPDIR/.DirIcon"
-            echo "Icon found and symlinked: $rel_icon_path"
+            echo "Icon copied to AppDir root: $symlink_name"
             
             # Fix desktop file if it uses absolute path for Icon or has extension
             real_desktop_file=$(readlink -f "$desktop_file_path")
@@ -662,8 +694,21 @@ if [ -n "$desktop_file_path" ]; then
             sed -i 's|^Exec=[[:space:]]*/bin/|Exec=|' "$real_desktop_file"
             sed -i 's|^Exec=[[:space:]]*/sbin/|Exec=|' "$real_desktop_file"
             echo "Fixed Exec path in desktop file"
+        else
+            echo "Error: Icon '$icon_no_ext' not found in AppDir icon directories"
+            echo "Searched in: $search_dirs"
+            rm -rf "$APPDIR"
+            exit 1
         fi
+    else
+        echo "Error: No Icon= entry found in desktop file"
+        rm -rf "$APPDIR"
+        exit 1
     fi
+else
+    echo "Error: No .desktop file found in AppDir root"
+    rm -rf "$APPDIR"
+    exit 1
 fi
 
 # Fix DBus-activated apps (gapplication launch) - replace with actual binary
@@ -732,28 +777,6 @@ if [ -n "$metainfo_file" ] && [ -n "$desktop_file_path" ]; then
         echo "X-AppImage-Homepage=$homepage" >> "$real_desktop_file"
         echo "Added X-AppImage-Homepage=$homepage to desktop file"
     fi
-fi
-
-# Fallback if no icon found yet
-if [ ! -L "$APPDIR/.DirIcon" ] && [ ! -f "$APPDIR/.DirIcon" ]; then
-    if [ -d "$APPDIR/usr/share/icons/hicolor/scalable/apps" ]; then
-        image_files=$(find "$APPDIR/usr/share/icons/hicolor/scalable/apps" -type f \( -name "*.png" -o -name "*.svg" \))
-        image_file=$(echo "${image_files}" | tail -n1)
-        if [ -n "$image_file" ]; then
-            symlink_file=$(basename "$image_file")
-            image_file=${image_file#"$APPDIR"/}
-            ln -s "${image_file}" "${APPDIR}/${symlink_file}"
-            ln -s "${symlink_file}" "$APPDIR/.DirIcon"
-            echo "Symlink created to ${image_file} (fallback hicolor scalable)."
-        fi
-    fi
-fi
-
-# Final fallback to generic icon
-if [ ! -L "$APPDIR/.DirIcon" ] && [ ! -f "$APPDIR/.DirIcon" ]; then
-    cp -n "resources/terminal.svg" "${APPDIR}/"
-    ln -s "terminal.svg" "$APPDIR/.DirIcon"
-    echo "Warning: copied generic icon file 'terminal.svg' to AppDir."
 fi
 
 # Compile GSettings schemas if any exist

@@ -95,8 +95,7 @@ dnf2appimage/
     ├── AppRun            # AppImage entry point script
     ├── app-fixes.sh      # App-specific fix functions
     ├── excludelist       # Packages to never bundle
-    ├── terminal.desktop  # Fallback desktop file
-    └── terminal.svg      # Fallback icon
+    └── terminal.desktop  # Fallback desktop file
 ```
 
 ## Contributing

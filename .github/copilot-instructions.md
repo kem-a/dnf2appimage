@@ -18,7 +18,7 @@
 ## Project-Specific Conventions
 - **Toolbox Usage**: Always use `toolbox` for `dnf` commands to ensure a consistent environment and avoid host system conflicts.
 - **AppDir Structure**: Follow the standard AppDir layout: `usr/bin`, `usr/lib64`, `usr/share`, etc.
-- **Resource Management**: Place generic or fallback resources (like `terminal.desktop` or `terminal.svg`) in [resources/](../resources/).
+- **Resource Management**: Place generic or fallback resources (like `terminal.desktop`) in [resources/](../resources/).
 - **Extraction Pattern**: `rpm2cpio "$rpm_file" | (cd "$APPDIR" && cpio -idm)` is the standard way to extract packages.
 
 ## External Dependencies
