@@ -5,7 +5,7 @@
 # Licensed under the MIT License.
 # See LICENSE file in the project root for full license information.
 
-VERSION="1.3.0"
+VERSION="1.4.0"
 
 # Initialize variables
 DEBUG=false
@@ -750,12 +750,16 @@ if [ -n "$metainfo_file" ] && [ -n "$desktop_file_path" ]; then
     echo "Metainfo file found: $metainfo_file"
     real_desktop_file=$(readlink -f "$desktop_file_path")
     
-    # 1. Extract version
-    version=$(grep -m 1 'release version=' "$metainfo_file" | sed -n 's/.*version="\([^"]*\)".*/\1/p')
-    if [ -n "$version" ]; then
-        sed -i '/^X-AppImage-Version=/d' "$real_desktop_file"
-        echo "X-AppImage-Version=$version" >> "$real_desktop_file"
-        echo "Added X-AppImage-Version=$version to desktop file"
+    # 1. Extract version from <releases> section (first/latest release)
+    # Only add if X-AppImage-Version is not already in desktop file
+    if ! grep -q "^X-AppImage-Version=" "$real_desktop_file"; then
+        version=$(grep -m 1 '<release[^>]*version=' "$metainfo_file" | sed -n 's/.*version="\([^"]*\)".*/\1/p')
+        if [ -n "$version" ]; then
+            echo "X-AppImage-Version=$version" >> "$real_desktop_file"
+            echo "Added X-AppImage-Version=$version to desktop file"
+        fi
+    else
+        echo "X-AppImage-Version already present in desktop file"
     fi
     
     # 2. Extract description (first <p> tag content)
