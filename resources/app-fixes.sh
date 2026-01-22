@@ -113,6 +113,91 @@ pkgdatadir = _appimage_os.path.join(_script_dir, '..', 'share', '$app_name')|
             echo "Meson Python app patched for relocatability"
         fi
     done
+    
+    # Fix Python apps that use a separate defs.py module with hardcoded paths
+    # (e.g., gnome-tweaks has gtweak/defs.py with DATA_DIR, PKG_DATA_DIR, etc.)
+    fix_python_defs_modules "$APPDIR"
+}
+
+# Fix Python defs.py modules with hardcoded paths (common in GNOME Python apps)
+# These modules define constants like DATA_DIR = "/usr/share" that need relocating
+fix_python_defs_modules() {
+    local APPDIR="$1"
+    
+    # Find defs.py files in Python site-packages
+    for defs_file in $(find "$APPDIR/usr/lib" "$APPDIR/usr/lib64" -path "*/site-packages/*/defs.py" -type f 2>/dev/null); do
+        # Check if it has hardcoded /usr paths
+        if grep -qE '^(DATA_DIR|PKG_DATA_DIR|LOCALE_DIR|TWEAK_DIR|GSETTINGS_SCHEMA_DIR)\s*=\s*"\/usr' "$defs_file"; then
+            echo "Patching Python defs module: $defs_file"
+            
+            # Get the module directory for relative path calculation
+            module_dir=$(dirname "$defs_file")
+            module_name=$(basename "$module_dir")
+            
+            # Create a patched version that computes paths at runtime
+            # We'll add path computation code at the top and replace the constants
+            
+            # First, extract current values to understand the structure
+            local pkg_data_dir_val=$(grep '^PKG_DATA_DIR\s*=' "$defs_file" | sed 's/.*=\s*"\([^"]*\)".*/\1/')
+            local tweak_dir_val=$(grep '^TWEAK_DIR\s*=' "$defs_file" | sed 's/.*=\s*"\([^"]*\)".*/\1/')
+            
+            # Create wrapper code that detects AppImage environment
+            cat > "${defs_file}.new" << 'DEFS_HEADER'
+# AppImage-patched defs.py - paths computed at runtime
+import os as _defs_os
+
+# Detect if running from AppImage by checking for APPDIR env var
+# or by checking if the module path is not under system /usr
+_defs_module_dir = _defs_os.path.dirname(_defs_os.path.realpath(__file__))
+_defs_in_appimage = not _defs_module_dir.startswith("/usr/")
+
+if _defs_in_appimage:
+    # Running from AppImage - compute paths relative to module location
+    # Module is at: <AppDir>/usr/lib/pythonX.Y/site-packages/<module>/defs.py
+    # We need to get to: <AppDir>/usr
+    _defs_usr_dir = _defs_module_dir
+    for _ in range(4):  # Go up: defs.py -> module -> site-packages -> pythonX.Y -> lib -> usr
+        _defs_usr_dir = _defs_os.path.dirname(_defs_usr_dir)
+    # Now _defs_usr_dir should be at <AppDir>/usr or <AppDir>/usr/lib64's parent
+    # Normalize by going to the 'usr' level
+    while not _defs_usr_dir.endswith('/usr') and _defs_usr_dir != '/':
+        _defs_usr_dir = _defs_os.path.dirname(_defs_usr_dir)
+    
+    DATA_DIR = _defs_os.path.join(_defs_usr_dir, "share")
+    LOCALE_DIR = _defs_os.path.join(_defs_usr_dir, "share", "locale")
+    GSETTINGS_SCHEMA_DIR = _defs_os.path.join(_defs_usr_dir, "share", "glib-2.0", "schemas")
+DEFS_HEADER
+
+            # Extract app-specific values and add them
+            if [ -n "$pkg_data_dir_val" ]; then
+                pkg_subdir=$(basename "$pkg_data_dir_val")
+                echo "    PKG_DATA_DIR = _defs_os.path.join(_defs_usr_dir, \"share\", \"$pkg_subdir\")" >> "${defs_file}.new"
+            fi
+            
+            if [ -n "$tweak_dir_val" ]; then
+                # TWEAK_DIR points to the tweaks subdir in the module
+                echo "    TWEAK_DIR = _defs_os.path.join(_defs_module_dir, \"tweaks\")" >> "${defs_file}.new"
+            fi
+            
+            # Add else clause with original values
+            echo "else:" >> "${defs_file}.new"
+            echo "    # Running from system installation - use original paths" >> "${defs_file}.new"
+            
+            # Copy original constant definitions (indented under else)
+            grep -E '^(DATA_DIR|PKG_DATA_DIR|LOCALE_DIR|TWEAK_DIR|GSETTINGS_SCHEMA_DIR)\s*=' "$defs_file" | \
+                sed 's/^/    /' >> "${defs_file}.new"
+            
+            # Copy remaining non-path constants
+            echo "" >> "${defs_file}.new"
+            echo "# Non-path constants (unchanged)" >> "${defs_file}.new"
+            grep -vE '^(DATA_DIR|PKG_DATA_DIR|LOCALE_DIR|TWEAK_DIR|GSETTINGS_SCHEMA_DIR)\s*=' "$defs_file" >> "${defs_file}.new"
+            
+            # Replace original file
+            mv "${defs_file}.new" "$defs_file"
+            
+            echo "Python defs module patched for relocatability"
+        fi
+    done
 }
 
 # GIMP interpreter files have hardcoded /usr/bin paths that need to be fixed
