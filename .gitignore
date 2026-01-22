@@ -6,3 +6,5 @@
 *.appimage
 *.AppDir/
 *-rpm/
+*ns.md
+
