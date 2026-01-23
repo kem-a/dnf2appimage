@@ -76,8 +76,9 @@ WRAPPER_EOF
 }
 
 # Meson Python apps have hardcoded paths like:
-# pkgdatadir = '/usr/share/appname'
-# localedir = '/usr/share/locale'
+# pkgdatadir = '/usr/share/appname' (lowercase, e.g., gnome-tweaks)
+# PKGDATA_DIR = '/usr/share/appname' (uppercase, e.g., gnome-music)
+# localedir/LOCALE_DIR = '/usr/share/locale'
 # These need to be made relative to the script location
 fix_meson_python_apps() {
     local APPDIR="$1"
@@ -85,32 +86,63 @@ fix_meson_python_apps() {
     for py_script in "$APPDIR/usr/bin/"*; do
         [ -f "$py_script" ] || continue
         
-        # Check if it's a Python script with hardcoded pkgdatadir
-        if head -1 "$py_script" | grep -q "python" && grep -q "^pkgdatadir = '/usr/share/" "$py_script"; then
-            echo "Patching Meson Python app: $(basename "$py_script")"
+        # Check if it's a Python script with hardcoded paths (lowercase or uppercase)
+        if head -1 "$py_script" | grep -q "python"; then
+            local needs_patch=false
+            local app_name=""
+            local use_uppercase=false
             
-            # Get the app name from pkgdatadir
-            app_name=$(grep "^pkgdatadir = " "$py_script" | sed "s/.*'\\/usr\\/share\\/\\([^']*\\)'.*/\\1/")
+            # Check for lowercase pattern (pkgdatadir = '/usr/share/...')
+            if grep -q "^pkgdatadir = '/usr/share/" "$py_script"; then
+                needs_patch=true
+                app_name=$(grep "^pkgdatadir = " "$py_script" | sed "s/.*'\\/usr\\/share\\/\\([^']*\\)'.*/\\1/")
+                use_uppercase=false
+            # Check for uppercase pattern (PKGDATA_DIR = '/usr/share/...')
+            elif grep -q "^PKGDATA_DIR = '/usr/share/" "$py_script"; then
+                needs_patch=true
+                app_name=$(grep "^PKGDATA_DIR = " "$py_script" | sed "s/.*'\\/usr\\/share\\/\\([^']*\\)'.*/\\1/")
+                use_uppercase=true
+            fi
             
-            # Create a patched version that determines paths at runtime
-            # Replace the hardcoded paths with dynamic path computation
-            sed -i "
-                # Add imports at the top (after the shebang and any encoding line)
-                /^#!/ {
-                    a\\
-import os as _appimage_os
-                }
+            if [ "$needs_patch" = true ] && [ -n "$app_name" ]; then
+                echo "Patching Meson Python app: $(basename "$py_script") (app: $app_name)"
                 
-                # Replace hardcoded pkgdatadir
-                s|^pkgdatadir = '/usr/share/$app_name'|# AppImage: compute pkgdatadir relative to script location\\
-_script_dir = _appimage_os.path.dirname(_appimage_os.path.realpath(__file__))\\
-pkgdatadir = _appimage_os.path.join(_script_dir, '..', 'share', '$app_name')|
+                if [ "$use_uppercase" = true ]; then
+                    # Handle uppercase variable names (PKGDATA_DIR, LOCALE_DIR)
+                    sed -i "
+                        # Add imports at the top (after the shebang and any encoding line)
+                        /^#!/ {
+                            a\\
+import os as _appimage_os\\
+_script_dir = _appimage_os.path.dirname(_appimage_os.path.realpath(__file__))
+                        }
+                        
+                        # Replace hardcoded PKGDATA_DIR
+                        s|^PKGDATA_DIR = '/usr/share/$app_name'|PKGDATA_DIR = _appimage_os.path.join(_script_dir, '..', 'share', '$app_name')|
+                        
+                        # Replace hardcoded LOCALE_DIR
+                        s|^LOCALE_DIR = '/usr/share/locale'|LOCALE_DIR = _appimage_os.path.join(_script_dir, '..', 'share', 'locale')|
+                    " "$py_script"
+                else
+                    # Handle lowercase variable names (pkgdatadir, localedir)
+                    sed -i "
+                        # Add imports at the top (after the shebang and any encoding line)
+                        /^#!/ {
+                            a\\
+import os as _appimage_os\\
+_script_dir = _appimage_os.path.dirname(_appimage_os.path.realpath(__file__))
+                        }
+                        
+                        # Replace hardcoded pkgdatadir
+                        s|^pkgdatadir = '/usr/share/$app_name'|pkgdatadir = _appimage_os.path.join(_script_dir, '..', 'share', '$app_name')|
+                        
+                        # Replace hardcoded localedir
+                        s|^localedir = '/usr/share/locale'|localedir = _appimage_os.path.join(_script_dir, '..', 'share', 'locale')|
+                    " "$py_script"
+                fi
                 
-                # Replace hardcoded localedir
-                s|^localedir = '/usr/share/locale'|localedir = _appimage_os.path.join(_script_dir, '..', 'share', 'locale')|
-            " "$py_script"
-            
-            echo "Meson Python app patched for relocatability"
+                echo "Meson Python app patched for relocatability"
+            fi
         fi
     done
     
