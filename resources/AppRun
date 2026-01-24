@@ -72,8 +72,12 @@ export GI_TYPELIB_PATH="${HERE}/usr/lib/girepository-1.0/:${HERE}/usr/lib64/gire
 # GSettings
 export GSETTINGS_SCHEMA_DIR="${HERE}/usr/share/glib-2.0/schemas/${GSETTINGS_SCHEMA_DIR:+:$GSETTINGS_SCHEMA_DIR}"
 
-# Grilo media framework
-export GRL_PLUGIN_PATH="${HERE}/usr/lib64/grilo-0.3/:${HERE}/usr/lib/grilo-0.3/${GRL_PLUGIN_PATH:+:$GRL_PLUGIN_PATH}"
+# Grilo media framework (only add paths that exist to avoid warnings)
+# Filter out stale AppImage mount paths from inherited environment
+GRL_PLUGIN_PATH=$(echo "${GRL_PLUGIN_PATH}" | tr ':' '\n' | grep -v '/tmp/.mount_' | tr '\n' ':' | sed 's/:$//')
+for grl_dir in "${HERE}/usr/lib64/grilo-0.3" "${HERE}/usr/lib/grilo-0.3"; do
+  [ -d "$grl_dir" ] && export GRL_PLUGIN_PATH="${grl_dir}${GRL_PLUGIN_PATH:+:$GRL_PLUGIN_PATH}"
+done
 
 # GEGL image processing framework (used by GNOME Photos, GIMP, etc.)
 export GEGL_PATH="${HERE}/usr/lib64/gegl-0.4/:${HERE}/usr/lib/gegl-0.4/${GEGL_PATH:+:$GEGL_PATH}"
