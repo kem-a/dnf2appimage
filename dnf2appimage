@@ -524,6 +524,45 @@ fi
 rm -rf tmp
 
 #
+# Fix broken absolute symlinks - convert to relative paths within AppDir
+# This is critical for apps like gnome-maps where /usr/bin/gnome-maps -> /usr/share/gnome-maps/org.gnome.Maps
+#
+echo "Fixing absolute symlinks..."
+fixed_symlinks=0
+while IFS= read -r symlink; do
+    target=$(readlink "$symlink")
+    # Only process absolute symlinks (starting with /)
+    if [ "${target#/}" != "$target" ]; then
+        # Check if target exists in AppDir
+        if [ -e "$APPDIR$target" ]; then
+            # Calculate relative path from symlink location to target
+            symlink_dir=$(dirname "$symlink")
+            # Remove APPDIR prefix from both paths
+            symlink_rel="${symlink_dir#$APPDIR}"
+            target_rel="$target"
+            
+            # Count directory depth of symlink location to build relative path
+            depth=$(echo "$symlink_rel" | tr -cd '/' | wc -c)
+            rel_prefix=""
+            i=0
+            while [ $i -lt $depth ]; do
+                rel_prefix="../$rel_prefix"
+                i=$((i + 1))
+            done
+            
+            # Build new relative target (remove leading / from target)
+            new_target="${rel_prefix}${target#/}"
+            
+            # Remove old symlink and create new relative one
+            rm "$symlink"
+            ln -s "$new_target" "$symlink"
+            ((fixed_symlinks++))
+        fi
+    fi
+done < <(find "$APPDIR" -type l 2>/dev/null)
+[ $fixed_symlinks -gt 0 ] && echo "Fixed $fixed_symlinks absolute symlinks"
+
+#
 # Bundle known dlopen'd dependencies that aren't declared in RPM requires
 # These are libraries loaded at runtime via dlopen() and missed by dependency resolution
 #

@@ -36,40 +36,45 @@ fix_gjs_apps() {
         if head -1 "$gjs_script" | grep -q "gjs"; then
             echo "Patching GJS app: $(basename "$gjs_script")"
             
-            # Rename original script
-            mv "$gjs_script" "${gjs_script}.original"
+            # Get the app ID from the script name (e.g., org.gnome.Maps)
+            local app_basename=$(basename "$gjs_script")
+            local pkgdatadir=$(dirname "$gjs_script")
+            # Get path relative to APPDIR/usr (not APPDIR)
+            local pkgdatadir_rel="${pkgdatadir#$APPDIR/usr}"
             
-            # Create wrapper script that sets APPIMAGE_USR for the patched script
-            cat > "$gjs_script" << 'WRAPPER_EOF'
-#!/bin/bash
-# GJS wrapper for AppImage
-# Get the real path of this script (resolving symlinks)
-SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
-SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
-SCRIPT_NAME="$(basename "$SCRIPT_PATH")"
-
-# Set APPIMAGE_USR to the /usr prefix inside the AppImage
-# This goes from /xxx/usr/share/org.gnome.AppId -> /xxx/usr
-export APPIMAGE_USR="${SCRIPT_DIR}/../.."
-
-# Execute the original GJS script with the bundled interpreter
-# The AppRun sets up GI_TYPELIB_PATH already
-if [ -x "${SCRIPT_DIR}/../../bin/gjs-console" ]; then
-    exec "${SCRIPT_DIR}/../../bin/gjs-console" "${SCRIPT_DIR}/${SCRIPT_NAME}.original" "$@"
-elif [ -x "${SCRIPT_DIR}/../../bin/gjs" ]; then
-    exec "${SCRIPT_DIR}/../../bin/gjs" "${SCRIPT_DIR}/${SCRIPT_NAME}.original" "$@"
-else
-    # Fallback to system gjs
-    exec gjs "${SCRIPT_DIR}/${SCRIPT_NAME}.original" "$@"
-fi
-WRAPPER_EOF
+            # Create a patched version of the script using file operations
+            # instead of sed to avoid escaping issues
+            {
+                # Keep the shebang
+                head -1 "$gjs_script"
+                
+                # Add our initialization code
+                echo 'const GLib = imports.gi.GLib;'
+                echo 'const Gio = imports.gi.Gio;'
+                echo 'const _appimage_usr = GLib.getenv("APPIMAGE_USR");'
+                echo 'if (_appimage_usr) {'
+                echo "    const _pkgdatadir = _appimage_usr + \"${pkgdatadir_rel}\";"
+                echo '    ["src", "data", "shields"].forEach(type => {'
+                echo '        try {'
+                echo "            const f = _pkgdatadir + \"/${app_basename}.\" + type + \".gresource\";"
+                echo '            if (GLib.file_test(f, GLib.FileTest.EXISTS))'
+                echo '                Gio.resources_register(Gio.Resource.load(f));'
+                echo '        } catch(e) {}'
+                echo '    });'
+                echo '}'
+                
+                # Add rest of the file (skip shebang)
+                tail -n +2 "$gjs_script"
+            } > "${gjs_script}.new"
+            
+            mv "${gjs_script}.new" "$gjs_script"
             chmod +x "$gjs_script"
             
-            # Patch the original script to use APPIMAGE_USR environment variable if set
-            # This replaces prefix: "/usr" with dynamic path from environment
-            # We need to import GLib first to access environment variables
-            sed -i '1a\const GLib = imports.gi.GLib;' "${gjs_script}.original"
-            sed -i 's#prefix: "/usr"#prefix: GLib.getenv("APPIMAGE_USR") || "/usr"#' "${gjs_script}.original"
+            # Patch prefix and libdir to use APPIMAGE_USR
+            sed -i 's#prefix: "/usr"#prefix: GLib.getenv("APPIMAGE_USR") || "/usr"#' "$gjs_script"
+            sed -i 's#libdir: "/usr/lib64"#libdir: (GLib.getenv("APPIMAGE_USR") || "/usr") + "/lib64"#' "$gjs_script"
+            sed -i 's#libdir: "/usr/lib"#libdir: (GLib.getenv("APPIMAGE_USR") || "/usr") + "/lib"#' "$gjs_script"
+            
             echo "GJS app patched for relocatability"
         fi
     done
