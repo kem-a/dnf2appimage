@@ -5,8 +5,16 @@ HERE="$(dirname "$(readlink -f "${0}")")"
 [ -f "${HERE}/gimp-env.sh" ] && . "${HERE}/gimp-env.sh"
 [ -f "${HERE}/gweather-env.sh" ] && . "${HERE}/gweather-env.sh"
 
-# PATH
+# PATH - standard locations plus any app-specific bin dirs in /usr/share (e.g., VSCode, Slack)
 export PATH="${HERE}:${HERE}/usr/bin/:${HERE}/usr/sbin/:${HERE}/usr/games/:${HERE}/bin/:${HERE}/sbin/${PATH:+:$PATH}"
+# Add /usr/share/*/bin and /usr/share/*/ directories that contain executables (Electron apps)
+for share_dir in "${HERE}"/usr/share/*/; do
+  [ -d "$share_dir" ] || continue
+  # Check if this directory contains an executable (not just data)
+  if [ -x "${share_dir}bin" ] || find "$share_dir" -maxdepth 1 -type f -executable 2>/dev/null | grep -q .; then
+    export PATH="${share_dir}:${share_dir}bin:${PATH}"
+  fi
+done
 
 # LD_LIBRARY_PATH - use pre-generated lib.path if available (faster startup)
 # lib.path contains relative paths with + prefix, one per line

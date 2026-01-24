@@ -689,10 +689,16 @@ if [ -n "$desktop_file_path" ]; then
             echo "Fixed Icon path in desktop file to $icon_no_ext"
             
             # Fix Exec path in desktop file
+            # Standard bin directories
             sed -i 's|^Exec=[[:space:]]*/usr/bin/|Exec=|' "$real_desktop_file"
             sed -i 's|^Exec=[[:space:]]*/usr/sbin/|Exec=|' "$real_desktop_file"
             sed -i 's|^Exec=[[:space:]]*/bin/|Exec=|' "$real_desktop_file"
             sed -i 's|^Exec=[[:space:]]*/sbin/|Exec=|' "$real_desktop_file"
+            # Electron/VSCode-style apps that install in /usr/share/appname/
+            # Match pattern: /usr/share/something/executable -> executable
+            sed -i 's|^Exec=[[:space:]]*/usr/share/[^/]*/|Exec=|' "$real_desktop_file"
+            # libexec paths
+            sed -i 's|^Exec=[[:space:]]*/usr/libexec/|Exec=|' "$real_desktop_file"
             echo "Fixed Exec path in desktop file"
         else
             echo "Error: Icon '$icon_no_ext' not found in AppDir icon directories"
