@@ -7,4 +7,5 @@
 *.AppDir/
 *-rpm/
 *ns.md
+.vscode/
 
