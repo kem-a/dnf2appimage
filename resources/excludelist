@@ -236,8 +236,6 @@ zvbi
 cdparanoia-libs
 libdvdnav
 libdvdread
-libbluray
-libudfread
 
 # Hardware video
 libva

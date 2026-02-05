@@ -11,6 +11,7 @@ VERSION="1.4.0"
 DEBUG=false
 MINIMAL=true
 PKG=""
+EXTRA_PKGS=""
 
 # Get host architecture
 HOST_ARCH=$(uname -m)
@@ -20,10 +21,14 @@ show_help() {
   echo "Usage: $(basename "$0") [OPTIONS] <package_name_or_rpm>"
   echo ""
   echo "Options:"
-  echo "  --help     Show this help message"
-  echo "  --version  Show version information"
-  echo "  --debug    Keep build directory (.AppDir) after successful build"
-  echo "  --full     Bundle all dependencies (default: only bundle deps not on host)"
+  echo "  --help              Show this help message"
+  echo "  --version           Show version information"
+  echo "  --debug             Keep build directory (.AppDir) after successful build"
+  echo "  --full              Bundle all dependencies (default: only bundle deps not on host)"
+  echo "  --extra <pkg,...>   Additional packages to bundle (comma-separated, mutually exclusive with --full)"
+  echo ""
+  echo "Example:"
+  echo "  $(basename "$0") --extra ffmpeg-libs,libva nextcloud-client"
   echo ""
   exit 0
 }
@@ -43,8 +48,24 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --full)
+      if [ -n "$EXTRA_PKGS" ]; then
+        echo "Error: --full and --extra are mutually exclusive"
+        exit 1
+      fi
       MINIMAL=false
       shift
+      ;;
+    --extra)
+      if [ "$MINIMAL" = false ]; then
+        echo "Error: --full and --extra are mutually exclusive"
+        exit 1
+      fi
+      if [ -z "$2" ] || [[ "$2" == -* ]]; then
+        echo "Error: --extra requires a comma-separated list of packages"
+        exit 1
+      fi
+      EXTRA_PKGS="$2"
+      shift 2
       ;;
     -*)
       echo "Error: Unknown option $1"
@@ -490,6 +511,33 @@ fi
 if [ -n "$LOCAL_RPM" ]; then
   cp "$LOCAL_RPM" tmp/
   echo "Added local RPM: $(basename "$LOCAL_RPM")"
+fi
+
+# Download extra packages if specified (--extra option)
+if [ -n "$EXTRA_PKGS" ]; then
+  echo "Downloading extra packages: $EXTRA_PKGS"
+  # Convert comma-separated list to space-separated
+  EXTRA_PKG_LIST=$(echo "$EXTRA_PKGS" | tr ',' ' ')
+  for extra_pkg in $EXTRA_PKG_LIST; do
+    echo "Resolving: $extra_pkg"
+    EXTRA_URLS=$($TOOLBOX_RUN dnf5 download --resolve --url --arch="$HOST_ARCH" --arch=noarch "$extra_pkg" 2>/dev/null)
+    if [ -z "$EXTRA_URLS" ]; then
+      echo "Warning: Could not resolve package '$extra_pkg'"
+      continue
+    fi
+    while IFS= read -r url; do
+      [ -z "$url" ] && continue
+      filename=$(basename "$url")
+      # Skip if already downloaded
+      if [ -f "tmp/$filename" ]; then
+        continue
+      fi
+      echo "Downloading $filename"
+      if ! curl -sL -o "tmp/$filename" "$url"; then
+        echo "Warning: Failed to download $url"
+      fi
+    done <<< "$EXTRA_URLS"
+  done
 fi
 
 fi  # End of LOCAL_ONLY else block
