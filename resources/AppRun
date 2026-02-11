@@ -149,6 +149,30 @@ for webkitdir in "${HERE}"/usr/libexec/webkitgtk-*; do
   fi
 done
 
+# Additional bwrap binds (app-specific), generated at build time
+BWRAP_EXTRA_ARGS=""
+if [ -f "${HERE}/bwrap.binds" ]; then
+  while read -r action src dest; do
+    [ -z "$action" ] && continue
+    case "$action" in
+      \#*)
+        continue
+        ;;
+      dir)
+        [ -n "$src" ] && BWRAP_EXTRA_ARGS="$BWRAP_EXTRA_ARGS --dir $src"
+        ;;
+      bind)
+        [ -n "$src" ] || continue
+        [ -n "$dest" ] || continue
+        if [ "${src#/}" = "$src" ]; then
+          src="${HERE}/${src}"
+        fi
+        BWRAP_EXTRA_ARGS="$BWRAP_EXTRA_ARGS --bind $src $dest"
+        ;;
+    esac
+  done < "${HERE}/bwrap.binds"
+fi
+
 # Mozilla
 export MOZ_LEGACY_PROFILES=1 # Prevent per installation profiles
 
@@ -170,7 +194,8 @@ fi
 
 # WebKitGTK fix: use bwrap to bind-mount our helpers to /usr/libexec
 # This is needed because WebKit has hardcoded paths compiled into the library
-if [ -n "$WEBKIT_APPIMAGE_FIX" ] && [ -d "$WEBKIT_APPIMAGE_FIX" ] && command -v bwrap >/dev/null 2>&1; then
+if { [ -n "$WEBKIT_APPIMAGE_FIX" ] && [ -d "$WEBKIT_APPIMAGE_FIX" ]; } || [ -n "$BWRAP_EXTRA_ARGS" ]; then
+  if command -v bwrap >/dev/null 2>&1; then
     # Cleanup on exit
     cleanup_webkit() {
         rm -rf "$WEBKIT_APPIMAGE_FIX" 2>/dev/null
@@ -191,7 +216,13 @@ if [ -n "$WEBKIT_APPIMAGE_FIX" ] && [ -d "$WEBKIT_APPIMAGE_FIX" ] && command -v 
     fi
     
     # Build bwrap arguments - start with basic bind
-    BWRAP_ARGS="--dev-bind / / --bind $WEBKIT_APPIMAGE_FIX/usr/libexec /usr/libexec"
+    BWRAP_ARGS="--dev-bind / /"
+    if [ -n "$WEBKIT_APPIMAGE_FIX" ] && [ -d "$WEBKIT_APPIMAGE_FIX" ]; then
+      BWRAP_ARGS="$BWRAP_ARGS --bind $WEBKIT_APPIMAGE_FIX/usr/libexec /usr/libexec"
+    fi
+    if [ -n "$BWRAP_EXTRA_ARGS" ]; then
+      BWRAP_ARGS="$BWRAP_ARGS $BWRAP_EXTRA_ARGS"
+    fi
     
     # Add lib64 webkit bind if it exists in our AppImage (for injected bundle)
     # Only do this if the target directory already exists on the system
@@ -218,11 +249,18 @@ if [ -n "$WEBKIT_APPIMAGE_FIX" ] && [ -d "$WEBKIT_APPIMAGE_FIX" ] && command -v 
         --setenv WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS "$WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS" \
         --setenv WEBKIT2_INJECTED_BUNDLE_PATH "$WEBKIT2_INJECTED_BUNDLE_PATH" \
         ${EXEC} "$@"
-elif [ -n "$WEBKIT_APPIMAGE_FIX" ]; then
+  else
     # Cleanup temp dir if bwrap not available
     rm -rf "$WEBKIT_APPIMAGE_FIX" 2>/dev/null
-    echo "Warning: WebKitGTK app detected but 'bwrap' (bubblewrap) is not installed."
-    echo "The app may not work correctly. Install bubblewrap: sudo dnf install bubblewrap"
+    if [ -n "$WEBKIT_APPIMAGE_FIX" ]; then
+      echo "Warning: WebKitGTK app detected but 'bwrap' (bubblewrap) is not installed."
+      echo "The app may not work correctly. Install bubblewrap: sudo dnf install bubblewrap"
+    fi
+    if [ -n "$BWRAP_EXTRA_ARGS" ]; then
+      echo "Warning: AppImage requires bwrap binds but 'bwrap' is not installed."
+      echo "Install bubblewrap to enable those binds (sudo dnf install bubblewrap)"
+    fi
+  fi
 fi
 
 exec ${EXEC} "$@"
