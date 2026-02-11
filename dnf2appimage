@@ -654,6 +654,96 @@ fi
 # Finalizing AppDir folder by adding required files
 #
 
+# Find metainfo early so it can help generate a fallback desktop entry
+metainfo_file=$(find "$APPDIR/usr/share/metainfo" -name "*.xml" -print -quit 2>/dev/null)
+
+# Helper: extract first matching value from metainfo
+get_metainfo_value() {
+  local file="$1"
+  local tag="$2"
+  [ -n "$file" ] || return 1
+  grep -m 1 -E "<${tag}([^>]*)>" "$file" 2>/dev/null | sed -n "s/.*<${tag}[^>]*>\([^<]*\)<\/${tag}>.*/\1/p"
+}
+
+# Helper: extract icon value from metainfo (stock or local)
+get_metainfo_icon() {
+  local file="$1"
+  [ -n "$file" ] || return 1
+  grep -m 1 -E "<icon[^>]*>" "$file" 2>/dev/null | sed -n "s/.*<icon[^>]*>\([^<]*\)<\/icon>.*/\1/p"
+}
+
+# Helper: find the best exec candidate in the AppDir
+find_exec_candidate() {
+  local candidates=()
+  local meta_id
+  local meta_name
+  meta_id=$(get_metainfo_value "$metainfo_file" "id")
+  meta_name=$(get_metainfo_value "$metainfo_file" "name")
+
+  [ -n "$PKG_NAME" ] && candidates+=("$PKG_NAME")
+  [ -n "$meta_id" ] && candidates+=("$meta_id" "${meta_id##*.}")
+  [ -n "$meta_name" ] && candidates+=("$meta_name")
+
+  for cand in "${candidates[@]}"; do
+    for dir in "$APPDIR/usr/bin" "$APPDIR/usr/sbin" "$APPDIR/usr/libexec"; do
+      if [ -x "$dir/$cand" ]; then
+        basename "$dir/$cand"
+        return 0
+      fi
+    done
+  done
+
+  local execs=()
+  for dir in "$APPDIR/usr/bin" "$APPDIR/usr/sbin" "$APPDIR/usr/libexec"; do
+    [ -d "$dir" ] || continue
+    while IFS= read -r exec_path; do
+      execs+=("$exec_path")
+    done < <(find "$dir" -maxdepth 1 -type f -perm -111 2>/dev/null | sort)
+  done
+
+  if [ ${#execs[@]} -eq 1 ]; then
+    basename "${execs[0]}"
+    return 0
+  fi
+
+  if [ ${#execs[@]} -gt 0 ]; then
+    basename "${execs[0]}"
+    return 0
+  fi
+
+  return 1
+}
+
+# Helper: create a fallback desktop file using metadata and inferred exec
+create_fallback_desktop() {
+  local exec_name
+  local app_name
+  local app_comment
+  local app_icon
+  exec_name=$(find_exec_candidate) || return 1
+  app_name=$(get_metainfo_value "$metainfo_file" "name")
+  app_comment=$(get_metainfo_value "$metainfo_file" "summary")
+  app_icon=$(get_metainfo_icon "$metainfo_file")
+
+  [ -n "$app_name" ] || app_name="$PKG_NAME"
+  [ -n "$app_comment" ] || app_comment="$app_name"
+  [ -n "$app_icon" ] || app_icon="terminal"
+
+  cat > "$APPDIR/${PKG_NAME}.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$app_name
+Comment=$app_comment
+Exec=$exec_name
+Icon=$app_icon
+Terminal=true
+Categories=Utility;
+EOF
+
+  echo "Created fallback desktop file: ${PKG_NAME}.desktop"
+  return 0
+}
+
 # Adding .desktop file
 # Strategy: 1) Match by package name, 2) Filter out NoDisplay=true, 3) Fallback to first visible
 if [ -d "$APPDIR/usr/share/applications/" ]; then
@@ -712,9 +802,11 @@ fi
 
 # Adding generic desktop file if original does not exist
 if [ ! "$(find "$APPDIR" -maxdepth 1 -name '*.desktop' -print -quit)" ]; then
-  # Copy the file to the AppDir
-  cp -n "resources/terminal.desktop" "${APPDIR}/"
-  echo "Warning: copied generic desktop file 'terminal.desktop' to AppDir.Please edit correct values."
+  if ! create_fallback_desktop; then
+    # Copy the file to the AppDir
+    cp -n "resources/terminal.desktop" "${APPDIR}/"
+    echo "Warning: copied generic desktop file 'terminal.desktop' to AppDir.Please edit correct values."
+  fi
 fi
 
 # Adding icon file in AppDir
@@ -788,10 +880,21 @@ if [ -n "$desktop_file_path" ]; then
             sed -i 's|^Exec=[[:space:]]*/usr/libexec/|Exec=|' "$real_desktop_file"
             echo "Fixed Exec path in desktop file"
         else
+          # Fallback: use bundled terminal.svg if we are using the generic desktop file
+          if [ "$icon_no_ext" = "terminal" ] && [ -f "$SCRIPT_DIR/resources/terminal.svg" ]; then
+            symlink_name="terminal.svg"
+            cp "$SCRIPT_DIR/resources/terminal.svg" "$APPDIR/$symlink_name"
+            ln -s "$symlink_name" "$APPDIR/.DirIcon"
+            echo "Icon copied to AppDir root: $symlink_name"
+            real_desktop_file=$(readlink -f "$desktop_file_path")
+            sed -i "s|^Icon[[:space:]]*=.*|Icon=terminal|" "$real_desktop_file"
+            echo "Fixed Icon path in desktop file to terminal"
+          else
             echo "Error: Icon '$icon_no_ext' not found in AppDir icon directories"
             echo "Searched in: $search_dirs"
             rm -rf "$APPDIR"
             exit 1
+          fi
         fi
     else
         echo "Error: No Icon= entry found in desktop file"
@@ -838,7 +941,6 @@ if [ -n "$desktop_file_path" ]; then
 fi
 
 # Adding metadata from metainfo.xml if it exists
-metainfo_file=$(find "$APPDIR/usr/share/metainfo" -name "*.xml" -print -quit)
 if [ -n "$metainfo_file" ] && [ -n "$desktop_file_path" ]; then
     echo "Metainfo file found: $metainfo_file"
     real_desktop_file=$(readlink -f "$desktop_file_path")
