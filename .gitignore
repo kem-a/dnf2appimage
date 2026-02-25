@@ -8,4 +8,6 @@
 *-rpm/
 *ns.md
 .vscode/
+AppDir/
+squashfs-root/
 
