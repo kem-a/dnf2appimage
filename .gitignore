@@ -10,4 +10,5 @@
 .vscode/
 AppDir/
 squashfs-root/
+squashfs-root
 
