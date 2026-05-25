@@ -48,12 +48,6 @@ export LD_LIBRARY_PATH="${HERE}/usr/lib/:${HERE}/usr/lib/x86_64-linux-gnu/:${HER
 DEFAULT_XDG_DATA_DIRS='./share/:/usr/share/gnome:/usr/local/share/:/usr/share/'
 export XDG_DATA_DIRS="${HERE}/usr/share/:${XDG_DATA_DIRS:-$DEFAULT_XDG_DATA_DIRS}"
 
-# GTK icon theme paths
-export GTK_DATA_PREFIX="${HERE}/usr"
-# Note: XDG_DATA_HOME should remain pointing to user's home (~/.local/share by default)
-# Do NOT set it to the AppImage's read-only filesystem, or GTK will fail to write recently-used.xbel
-export XCURSOR_PATH="${HERE}/usr/share/icons${XCURSOR_PATH:+:$XCURSOR_PATH}"
-
 # Python - dynamically detect version
 # Only set PYTHONHOME if a full Python installation is bundled (has encodings module)
 # Apps like Krita only bundle site-packages and need system Python stdlib
