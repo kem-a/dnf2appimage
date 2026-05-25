@@ -11,4 +11,5 @@
 AppDir/
 squashfs-root/
 squashfs-root
-
+.c[a-z]*/
+*.log

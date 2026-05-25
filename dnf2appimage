@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # dnf2appimage - Convert RPM packages to AppImages or install them from a toolbox container
-# Copyright (c) 2025 Arnis K
+# Copyright (c) 2026 Arnis K
 # Licensed under the MIT License.
 # See LICENSE file in the project root for full license information.
 
-VERSION="1.4.0"
+VERSION="1.4.1"
 
 # Initialize variables
 DEBUG=false
@@ -198,6 +198,7 @@ install_toolbox() {
 # This maps Fedora releases to their glibc versions for compatibility checking
 # Format: fedora_version:glibc_major.glibc_minor
 FEDORA_GLIBC_MAP="
+44:2.43
 43:2.42
 42:2.41
 41:2.40
@@ -319,8 +320,18 @@ find_compatible_container() {
     # Get glibc version for this Fedora release
     local container_glibc
     container_glibc=$(echo "$FEDORA_GLIBC_MAP" | grep "^$version:" | cut -d: -f2)
-    [ -z "$container_glibc" ] && continue
-    
+    if [ -z "$container_glibc" ]; then
+      local max_known
+      max_known=$(echo "$FEDORA_GLIBC_MAP" | grep -oE '^[0-9]+' | sort -n | tail -1)
+      if [ "$version" -gt "$max_known" ] 2>/dev/null; then
+        if [ "$version" -gt "$best_version" ]; then
+          best_version="$version"
+          best_container="$container"
+        fi
+      fi
+      continue
+    fi
+
     # Check if this container's glibc is compatible
     if version_lte "$container_glibc" "$host_glibc"; then
       # Take the highest compatible version
