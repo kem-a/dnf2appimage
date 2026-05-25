@@ -989,6 +989,22 @@ if [ -n "$metainfo_file" ] && [ -n "$desktop_file_path" ]; then
     fi
 fi
 
+# Fallback: extract version from Electron app's resources/app/package.json
+# Used when no metainfo.xml exists (most Electron apps ship package.json instead)
+if [ -n "$desktop_file_path" ]; then
+    real_desktop_file=$(readlink -f "$desktop_file_path")
+    if ! grep -q "^X-AppImage-Version=" "$real_desktop_file"; then
+        package_json=$(find "$APPDIR" -path "*/resources/app/package.json" -print -quit 2>/dev/null)
+        if [ -n "$package_json" ]; then
+            version=$(grep -m 1 -oE '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$package_json" | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+            if [ -n "$version" ]; then
+                echo "X-AppImage-Version=$version" >> "$real_desktop_file"
+                echo "Added X-AppImage-Version=$version to desktop file (from Electron package.json)"
+            fi
+        fi
+    fi
+fi
+
 # Compile GSettings schemas if any exist
 if [ -d "$APPDIR/usr/share/glib-2.0/schemas" ]; then
     schema_files=$(find "$APPDIR/usr/share/glib-2.0/schemas" -name "*.gschema.xml" 2>/dev/null)
